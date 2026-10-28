@@ -258,6 +258,7 @@ When the preamble still does not work, the mod keeps what works: your `macros` i
 - **One formula shows as text.** TeX refused it; `/inline-math status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
 - **A diagram shows as source.** The dim line under it says why. A wider window helps when it is too wide.
 - **Claude writes math in code blocks.** Check that `promptHint` is on; the note applies from the next turn.
+- **Lines of base64 appear in the pane, and old lines stay on screen.** Something other than Claude Code wrote to the pane's tty while a picture was being sent, often a hook that sends a desktop notification (`printf '\ePtmux;...' > "#{pane_tty}"`). A picture can be 100 KB or more and goes out in several writes; a sequence that lands between two of them ends the picture early, and tmux draws the rest of it as text. Never write to the tty of a Claude Code pane: send the sequence through another pane, such as a short-lived hidden window with `allow-passthrough all`, as tmux passes each pane's passthrough to the terminal in one piece. Resize or zoom the pane (`prefix z` twice) to redraw it.
 - **Something looks wrong.** `/inline-math off` draws replies as Claude Code does; `claude --debug` logs why a hook was skipped.
 
 ## License
