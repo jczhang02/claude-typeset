@@ -744,4 +744,26 @@ describe('demo', () => {
     expect(art).not.toContain('shown as source')
     await ui.unmount()
   })
+
+  test('off: the demo output is left to the engine too', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    await $.command.run({ ...RUN, command: 'inline-math', args: 'off' })
+    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'demo' })
+    const ui = await $.ui.mount({
+      plugin: 'inline-math',
+      component: 'CommandOutput',
+      requestId: 'demo-1',
+      viewport: { columns: 100, rows: 40 },
+      props: { command: 'inline-math', args: 'demo', text: text ?? '', isErrored: false },
+      surface: 'terminal',
+    })
+    await clock.advance(100)
+    expect((await ui.find({ type: 'Text' }))?.text).toBe('engine')
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
+    expect(backend.batches).toHaveLength(0)
+    await ui.unmount()
+  })
 })

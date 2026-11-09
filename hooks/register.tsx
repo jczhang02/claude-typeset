@@ -718,7 +718,7 @@ export const register: Register = (on, options) => {
   // The demo's output row is drawn by the same code as a reply.
   on('ui.render', { component: 'CommandOutput', props: { command: COMMAND } }, async ($, e, next) => {
     try {
-      if (e.surface !== 'terminal' || e.props.isErrored || e.props.args.trim().toLowerCase() !== 'demo') return next(e)
+      if (e.surface !== 'terminal' || !isEnabled() || e.props.isErrored || e.props.args.trim().toLowerCase() !== 'demo') return next(e)
       const found = plan(e.props.text)
       if (found === null || !('blocks' in found)) return next(e)
       const frame: Frame = { prefix: OUTPUT_PREFIX, width: frameWidth(e.viewport?.columns, OUTPUT_GUTTER), marginTop: 0 }
