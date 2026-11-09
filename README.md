@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>claude-inline-math</h1>
+  <h1>typeset</h1>
   <p><b>Typeset the LaTeX in Claude's replies and draw mermaid diagrams, right in the terminal. Works inside tmux.</b></p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Claude_Code-2.1.311%2B-d97757?style=flat-square" alt="Claude Code 2.1.311+">
@@ -10,7 +10,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/hero-dark.webp">
-    <img src="docs/img/hero-light.webp" alt="/inline-math demo and a reply with a formula and a training-loop flowchart, in Ghostty inside tmux" width="1000">
+    <img src="docs/img/hero-light.webp" alt="/typeset demo and a reply with a formula and a training-loop flowchart, in Ghostty inside tmux" width="1000">
   </picture>
 </p>
 
@@ -28,6 +28,8 @@
 - **Safe by default**: Claude's formulas are typeset in a safe subset of LaTeX; nothing in a reply can read files, run programs, or change how another formula is drawn
 
 ## Quick Start
+
+> Formerly `inline-math`. The command is now `/typeset`, and the options live under `typeset@…` in `pluginConfigs` (move your old `inline-math@…` entry). A stored `/inline-math off` does not carry over: the mod starts on.
 
 You need Claude Code 2.1.311 or later, a terminal with the kitty graphics protocol (Ghostty or kitty), a TeX distribution with `latex` and `dvipng`, and python3 with Pillow. Tested on Linux with Ghostty and tmux 3.8 (passthrough needs tmux 3.3 or later); macOS should work but is untested.
 
@@ -50,13 +52,13 @@ The CJK packages are only needed for Chinese, Japanese or Korean text inside a f
 Type this at the Claude Code prompt, answer `y` to add the marketplace, then pick a scope (the user scope loads it in every session):
 
 ```text
-/plugin install inline-math --marketplace jczhang02/claude-inline-math
+/plugin install typeset --marketplace jczhang02/claude-inline-math
 ```
 
 Or from a shell:
 
 ```bash
-claude plugin install inline-math --marketplace jczhang02/claude-inline-math
+claude plugin install typeset --marketplace jczhang02/claude-inline-math
 ```
 
 **Inside tmux**, add these lines to `~/.config/tmux/tmux.conf` or `~/.tmux.conf`, then restart tmux:
@@ -69,11 +71,11 @@ set -g focus-events on
 **Run**
 
 ```text
-/inline-math status          # What it found: latex, dvipng, Pillow, daemon, format, cell size, colour
-/inline-math demo            # A sample reply: inline, tall, display, Chinese, a list, a macro, a flowchart
-/inline-math off             # Draw replies as Claude Code does; kept across sessions
-/inline-math on              # Draw formulas and diagrams again
-/inline-math clear           # Forget the drawn pictures and typeset them again
+/typeset status          # What it found: latex, dvipng, Pillow, daemon, format, cell size, colour
+/typeset demo            # A sample reply: inline, tall, display, Chinese, a list, a macro, a flowchart
+/typeset off             # Draw replies as Claude Code does; kept across sessions
+/typeset on              # Draw formulas and diagrams again
+/typeset clear           # Forget the drawn pictures and typeset them again
 ```
 
 <details>
@@ -90,7 +92,7 @@ For every session, add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/set
 { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/Documents/dev-tools/claude-inline-math" } }
 ```
 
-Update an installed copy with `claude plugin update inline-math@claude-inline-math`.
+Update an installed copy with `claude plugin update typeset@claude-inline-math`.
 
 </details>
 
@@ -101,7 +103,7 @@ tmux is a first-class target: the mod is developed in Ghostty inside tmux.
 - **Pictures** are sent with the kitty graphics protocol. tmux passes them through to the outer terminal only with `allow-passthrough on`; without it, every formula shows as its Unicode stand-in (`x²`, `α + β`, `√π`, `ℝ`) and diagrams still draw, as they are text.
 - **Cell size** decides how large a picture is. Inside tmux the mod asks tmux for the client's cell size (`#{client_cell_width}x#{client_cell_height}`), and looks again every few seconds, so it follows the terminal you attach from. Outside tmux it asks the terminal.
 - **Several panes and sessions** share one render daemon and one picture cache, so a formula typeset in one pane costs no TeX run in the others.
-- **Check it**: `tmux show -g allow-passthrough` must say `on`, and `/inline-math status` shows the cell size it found. If it is wrong, set the `cell` option.
+- **Check it**: `tmux show -g allow-passthrough` must say `on`, and `/typeset status` shows the cell size it found. If it is wrong, set the `cell` option.
 
 ## Features in Detail
 
@@ -207,7 +209,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 ```json
 {
   "pluginConfigs": {
-    "inline-math": {
+    "typeset@claude-inline-math": {
       "options": {
         "packages": "physics, tensor",
         "macros": "\\newcommand{\\R}{\\mathbb{R}}\n\\DeclareMathOperator{\\tr}{tr}"
@@ -219,7 +221,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Draw formulas and diagrams. `/inline-math on` or `off` overrides it. |
+| `enabled` | `true` | Draw formulas and diagrams. `/typeset on` or `off` overrides it. |
 | `foreground` | `auto` | Formula colour. `auto` follows the desktop's light or dark scheme (Catppuccin Latte text `#4c4f69`, Mocha text `#cdd6f4`); or `#rrggbb`. |
 | `cell` | `auto` | One character cell in pixels. `auto` asks tmux, then the terminal; or `WxH`, such as `19x42`. |
 | `baseline` | `0.773` | Where the font's baseline sits in a cell, from the top, as a fraction of the cell height. 0.773 is JetBrains Mono. |
@@ -227,7 +229,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 | `minShrink` | `0.8` | How far an inline formula may shrink to stay on one row before it takes more rows. |
 | `thicken` | `1.8` | Makes the antialiased edges of TeX's thin strokes more opaque (alpha $a$ drawn as $1 - (1 - a)^{t}$), so formulas read as firmly as the terminal font. `1` draws them as TeX does. |
 | `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams. |
-| `packages` | empty | Extra TeX packages for every formula, separated by commas or spaces. A package that is not installed, or a bad name, is skipped and named in `/inline-math status`. |
+| `packages` | empty | Extra TeX packages for every formula, separated by commas or spaces. A package that is not installed, or a bad name, is skipped and named in `/typeset status`. |
 | `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. In `settings.json` write `\n` between lines and `\\` for each backslash. |
 | `diagramColor` | `true` | Colour diagrams by role. Off: the text colour alone. |
 
@@ -236,7 +238,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 
 `packages` and `macros` are yours, so they go into the preamble (and the format) without the safety check that Claude's formulas get. They load before the mod's own stand-ins, so a package's command wins over the mod's: with `physics`, `\abs`, `\dv`, `\pdv` and `\qty` are physics's own (and physics also redefines `\div`, `\Re` and `\Im`). Your `macros` win over a package: a name you define with `\newcommand`, `\DeclareMathOperator` or `\DeclarePairedDelimiter` replaces the package's command of that name, instead of stopping LaTeX with "already defined".
 
-When the preamble still does not work, the mod keeps what works: your `macros` if they work alone, then each package that still works when added. Each one left out is named, with TeX's error, in `/inline-math status`. Changing either option typesets every formula again.
+When the preamble still does not work, the mod keeps what works: your `macros` if they work alone, then each package that still works when added. Each one left out is named, with TeX's error, in `/typeset status`. Changing either option typesets every formula again.
 
 </details>
 
@@ -251,17 +253,17 @@ When the preamble still does not work, the mod keeps what works: your `macros` i
 
 ## Troubleshooting
 
-- **Formulas show as Unicode, never as pictures.** Run `/inline-math status` and install what it names, then `/inline-math clear`. If the backend is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
-- **Formulas are slow to appear.** `/inline-math status` shows the daemon and the format. `daemon: not reached` means each batch starts TeX from nothing; the status names each folder the socket could not use and why. `format: not built` usually means a package or macro breaks the preamble, also named there. The first formula after a TeX Live update or an option change waits a few seconds for the format.
-- **Stop the daemon or rebuild the format.** `pkill -f renderd.py` stops the daemon; the next formula starts a new one. Deleting `~/.cache/claude-inline-math/fmt/` makes the next formula build the format again. Then run `/inline-math clear`.
+- **Formulas show as Unicode, never as pictures.** Run `/typeset status` and install what it names, then `/typeset clear`. If the backend is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
+- **Formulas are slow to appear.** `/typeset status` shows the daemon and the format. `daemon: not reached` means each batch starts TeX from nothing; the status names each folder the socket could not use and why. `format: not built` usually means a package or macro breaks the preamble, also named there. The first formula after a TeX Live update or an option change waits a few seconds for the format.
+- **Stop the daemon or rebuild the format.** `pkill -f renderd.py` stops the daemon; the next formula starts a new one. Deleting `~/.cache/claude-inline-math/fmt/` makes the next formula build the format again. Then run `/typeset clear`.
 - **Formulas sit too high or too low.** Set `baseline` for your font, and `cell` if tmux reports the wrong size (`tmux display -p '#{client_cell_width}x#{client_cell_height}'`).
 - **Formulas are too large or too small.** Change `ptPx`.
 - **Formulas look faint or thin beside the text.** Raise `thicken` (2 to 2.5), or load a heavier math font with `packages` (`newtxmath`, `fourier`). On a desktop scaled by a fraction (1.25, 1.5) the compositor shrinks the whole window, which thins strokes further.
-- **One formula shows as text.** TeX refused it; `/inline-math status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
+- **One formula shows as text.** TeX refused it; `/typeset status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
 - **A diagram shows as source.** The dim line under it says why. A wider window helps when it is too wide.
 - **Claude writes math in code blocks.** Check that `promptHint` is on; the note applies from the next turn.
 - **Lines of base64 appear in the pane, and old lines stay on screen.** Something other than Claude Code wrote to the pane's tty while a picture was being sent, often a hook that sends a desktop notification (`printf '\ePtmux;...' > "#{pane_tty}"`). A picture can be 100 KB or more and goes out in several writes; a sequence that lands between two of them ends the picture early, and tmux draws the rest of it as text. Never write to the tty of a Claude Code pane: send the sequence through another pane, such as a short-lived hidden window with `allow-passthrough all`, as tmux passes each pane's passthrough to the terminal in one piece. Resize or zoom the pane (`prefix z` twice) to redraw it.
-- **Something looks wrong.** `/inline-math off` draws replies as Claude Code does; `claude --debug` logs why a hook was skipped.
+- **Something looks wrong.** `/typeset off` draws replies as Claude Code does; `claude --debug` logs why a hook was skipped.
 
 ## License
 

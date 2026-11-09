@@ -72,7 +72,7 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
 }
 
 const reply = (text: string, isFirstOfReply = true, requestId = 'msg-1', columns = 80) => ({
-  plugin: 'inline-math',
+  plugin: 'typeset',
   component: 'AssistantMessage' as const,
   requestId,
   viewport: { columns, rows: 40 },
@@ -298,7 +298,7 @@ describe('cache bounds', () => {
     const clock = mock.clock(on)
     const backend = host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'clear' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'clear' })
     await clock.advance(0)
     const ui = await $.ui.mount({ ...reply('Many $m_1$ $m_2$ $m_3$ $m_4$ $m_5$.'), surface: 'terminal' })
     const rounds = async () => {
@@ -314,7 +314,7 @@ describe('cache bounds', () => {
     expect(backend.batches.length).toBe(settled)
     expect(settled).toBeLessThan(12)
     await ui.unmount()
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'clear' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'clear' })
   })
 })
 
@@ -323,12 +323,12 @@ describe('commands and prompt', () => {
     host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'off' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'off' })
     const off = await $.ui.mount({ ...reply('Has $x$.'), surface: 'terminal' })
     expect((await off.find({ type: 'Text' }))?.text).toBe('engine')
     await off.unmount()
 
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'on' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'on' })
     const back = await $.ui.mount({ ...reply('Has $x$.'), surface: 'terminal' })
     expect(await back.find({ type: 'Text', text: 'engine' })).toBeUndefined()
     await back.unmount()
@@ -337,7 +337,7 @@ describe('commands and prompt', () => {
   test('status reports the backend', async ($, on) => {
     host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'status' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toContain('backend: ready')
     expect(text).toContain('19x42')
   })
@@ -349,7 +349,7 @@ describe('commands and prompt', () => {
     const base = { model: 'm', promptModel: 'm', tools: [], outputStyle: null, traits: [] }
 
     const composed = await $.prompt.compose({ ...base, surfaces: ['terminal'] })
-    expect(composed.sections.map(section => section.id)).toEqual(['intro', 'inline-math:hint'])
+    expect(composed.sections.map(section => section.id)).toEqual(['intro', 'typeset:hint'])
     const hint = composed.sections[1]?.text ?? ''
     expect(hint).toContain('$$...$$')
     expect(hint).toContain('mermaid')
@@ -634,13 +634,13 @@ describe('streaming', () => {
     const backend = host(on)
     model(on, Promise.resolve())
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'off' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'off' })
     const out: unknown[] = []
     for await (const chunk of $.turn.step(STEP)) out.push(chunk)
     await clock.advance(200)
     expect(out).toEqual(CHUNKS)
     expect(backend.batches).toHaveLength(0)
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'on' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'on' })
   })
 })
 
@@ -714,7 +714,7 @@ describe('status', () => {
   test('lists daemon, format, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
     host(on, { ...HEALTHY, daemon: { pid: 4242, uptime: 61.2, served: 7, warm: 1 }, format: { ok: true, path: '/c/fmt/x.fmt' } })
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'status' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toContain('daemon: running (pid 4242, up 61 s, 7 requests served)')
     expect(text).toContain('format: precompiled (/c/fmt/x.fmt)')
     expect(text).toContain('packages: physics; macros: 2 definitions')
@@ -724,7 +724,7 @@ describe('status', () => {
   test('no daemon, no format, or a backend that does not say', async ($, on) => {
     host(on, { ...HEALTHY, daemon: null, format: { ok: false } })
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'status' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toContain('daemon: not reached')
     expect(text).toContain('format: not built')
     expect(text).toContain('packages: none extra; macros: 0 definitions')
@@ -733,7 +733,7 @@ describe('status', () => {
   test('a backend that does not say has unknown daemon and format', async ($, on) => {
     host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'status' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toContain('daemon: unknown')
     expect(text).toContain('format: unknown')
   })
@@ -745,13 +745,13 @@ describe('demo', () => {
     const backend = host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     await clock.advance(0)
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'demo' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'demo' })
     const ui = await $.ui.mount({
-      plugin: 'inline-math',
+      plugin: 'typeset',
       component: 'CommandOutput',
       requestId: 'demo-1',
       viewport: { columns: 100, rows: 40 },
-      props: { command: 'inline-math', args: 'demo', text: text ?? '', isErrored: false },
+      props: { command: 'typeset', args: 'demo', text: text ?? '', isErrored: false },
       surface: 'terminal',
     })
     await clock.advance(100)
@@ -772,14 +772,14 @@ describe('demo', () => {
     const backend = host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     await clock.advance(0)
-    await $.command.run({ ...RUN, command: 'inline-math', args: 'off' })
-    const { text } = await $.command.run({ ...RUN, command: 'inline-math', args: 'demo' })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'off' })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'demo' })
     const ui = await $.ui.mount({
-      plugin: 'inline-math',
+      plugin: 'typeset',
       component: 'CommandOutput',
       requestId: 'demo-1',
       viewport: { columns: 100, rows: 40 },
-      props: { command: 'inline-math', args: 'demo', text: text ?? '', isErrored: false },
+      props: { command: 'typeset', args: 'demo', text: text ?? '', isErrored: false },
       surface: 'terminal',
     })
     await clock.advance(100)

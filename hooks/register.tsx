@@ -7,7 +7,7 @@ import type { DiagramRole, DiagramSegment } from './mermaid'
 import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme, warmUp } from './render-client'
 import type { Health, Settings } from './render-client'
 
-// inline-math: draws the LaTeX in Claude's replies as typeset pictures, inline
+// typeset: draws the LaTeX in Claude's replies as typeset pictures, inline
 // with the terminal text and on its baseline, and ```mermaid blocks as
 // Unicode diagrams. Blocks without either go to the surface's own Markdown
 // element; paragraphs with formulas are wrapped here, line by line
@@ -26,7 +26,7 @@ import type { Health, Settings } from './render-client'
 // formula as soon as it is closed, so its picture is ready when the
 // finished block is drawn.
 
-const COMMAND = 'inline-math'
+const COMMAND = 'typeset'
 const STORE_ENABLED = 'enabled'
 
 // The engine draws an assistant block as one row: a 2-cell column holding the
@@ -55,7 +55,7 @@ const DIAGRAM_ROWS = 80
 const DIAGRAM_FALLBACK = 'suggestion'
 
 // The state family a drawn reply reads, so a landed batch redraws it alone.
-const REDRAW = { plugin: 'inline-math', key: 'redraw' } as const
+const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
 
 // Memo bounds: trees by drawn site, parses by text. Above the replies of a
 // long session, as one redraw of the whole transcript must find them all
@@ -101,7 +101,7 @@ type Table = Elements['terminal']
 type Frame = { bullet?: string; prefix?: string; width: number; marginTop: number }
 
 let settings: Settings = readSettings({})
-let enabled: boolean | undefined // the /inline-math on|off choice; undefined: settings.enabled
+let enabled: boolean | undefined // the /typeset on|off choice; undefined: settings.enabled
 let bulletGlyph = BULLET_OTHER
 let maxProseWidth: number | undefined
 let lastColumns: number | undefined // the viewport width replies were last drawn at
@@ -563,7 +563,7 @@ export const register: Register = (on, options) => {
     onProblem(reason => {
       if (warned) return
       warned = true
-      $.ui.toast(`inline-math: formulas shown as text (${reason.slice(0, 200)}). Run /${COMMAND} status for details.`, {
+      $.ui.toast(`typeset: formulas shown as text (${reason.slice(0, 200)}). Run /${COMMAND} status for details.`, {
         timeoutMs: 10_000,
       })
     })
@@ -599,8 +599,8 @@ export const register: Register = (on, options) => {
 
     return {
       sections: [
-        ...composed.sections.filter(section => section.id !== 'inline-math:hint'),
-        { id: 'inline-math:hint', text: PROMPT_HINT, scope: 'session' as const },
+        ...composed.sections.filter(section => section.id !== 'typeset:hint'),
+        { id: 'typeset:hint', text: PROMPT_HINT, scope: 'session' as const },
       ],
     }
   })

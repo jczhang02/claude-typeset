@@ -339,7 +339,7 @@ describe('flowcharts', () => {
     drawn('flowchart LR\n A <--> B\n B --> C')
   })
 
-  test("the demo's diagram keeps every edge, at the widths /inline-math demo is drawn in", () => {
+  test("the demo's diagram keeps every edge, at the widths /typeset demo is drawn in", () => {
     const source = 'flowchart LR\n  A[回复 reply] --> B{formula?}\n  B -->|yes| C[picture]\n  B -->|no| D[text]'
     for (const width of [60, 75, 95, 120]) {
       const text = lines(drawn(source, width)).join('\n')

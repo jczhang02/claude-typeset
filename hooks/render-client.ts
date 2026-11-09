@@ -86,7 +86,7 @@ export const DEFAULTS: Settings = {
   diagramColor: true,
 }
 
-const REDRAW = { plugin: 'inline-math', key: 'redraw' } as const
+const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
 
 const MAX_COLUMNS = 255 // widest Image the terminal draws
 const COALESCE_MS = 30 // requests closer than this share one backend call
