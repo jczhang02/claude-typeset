@@ -49,6 +49,14 @@
       "min": 0.3,
       "max": 1
     },
+    "thicken": {
+      "type": "number",
+      "title": "Stroke thickening",
+      "description": "Makes the antialiased edges of TeX's thin strokes more opaque, so formulas read as firmly as the terminal font. 1 draws them as TeX does; 2 is about as firm as a terminal's font thickening.",
+      "default": 1.8,
+      "min": 1,
+      "max": 4
+    },
     "promptHint": {
       "type": "boolean",
       "title": "Tell Claude about it",

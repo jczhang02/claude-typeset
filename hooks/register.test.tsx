@@ -15,7 +15,7 @@ const HEALTHY = {
 }
 
 type Item = { latex: string; display: boolean }
-type Request = { items: Item[]; options: { fg: string; cell: string; packages?: string[]; macros?: string } }
+type Request = { items: Item[]; options: { fg: string; cell: string; thicken?: number; packages?: string[]; macros?: string } }
 type Backend = { batches: Item[][]; checks: number; detects: number; engineTexts: string[]; requests: Request[]; argv: string[][]; checkStdin: string[] }
 // What a test's render.py answers instead of the usual: a result for the
 // call, or undefined for the usual one.
@@ -380,6 +380,28 @@ describe('backend', () => {
     expect(backend.requests[0]?.options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
     expect(backend.requests[0]?.options.macros).toBe('\\newcommand{\\RR}{\\mathbb{R}}')
     expect(JSON.parse(backend.checkStdin[0] ?? '{}').options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
+    await ui.unmount()
+  })
+
+  test('sends the stroke thickening, 1.8 unless set', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply('Has $x$.'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.requests[0]?.options.thicken).toBe(1.8)
+    await ui.unmount()
+  })
+
+  test('thicken 1 draws strokes as TeX does', { options: { thicken: 1 } }, async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply('Has $x$.'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.requests[0]?.options.thicken).toBe(1)
     await ui.unmount()
   })
 })

@@ -29,6 +29,7 @@ export type Settings = {
   baseline: number
   ptPx: number
   minShrink: number
+  thicken: number // alpha a drawn as 1 - (1 - a)^thicken: firmer strokes
   promptHint: boolean
   packages: string[] // extra TeX Live packages, in the precompiled format
   macros: string // the user's own definitions, in the precompiled format
@@ -78,6 +79,7 @@ export const DEFAULTS: Settings = {
   baseline: 0.773,
   ptPx: 3.4,
   minShrink: 0.8,
+  thicken: 1.8,
   promptHint: true,
   packages: [],
   macros: '',
@@ -186,6 +188,7 @@ export function readSettings(options: PluginOptions): Settings {
     baseline: number(options.baseline, DEFAULTS.baseline, 0.3, 0.95),
     ptPx: number(options.ptPx, DEFAULTS.ptPx, 1, 12),
     minShrink: number(options.minShrink, DEFAULTS.minShrink, 0.3, 1),
+    thicken: number(options.thicken, DEFAULTS.thicken, 1, 4),
     promptHint: options.promptHint !== false,
     packages: readPackages(options.packages),
     macros: macros.length <= MAX_MACROS ? macros : '',
@@ -246,7 +249,7 @@ function currentCell(): string {
 }
 
 function optionsKey(): string {
-  return [currentFg(), currentCell(), settings.baseline, settings.ptPx, settings.minShrink, setupKey].join(',')
+  return [currentFg(), currentCell(), settings.baseline, settings.ptPx, settings.minShrink, settings.thicken, setupKey].join(',')
 }
 
 /**
@@ -483,6 +486,7 @@ async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
       baseline: settings.baseline,
       ptPx: settings.ptPx,
       minShrink: settings.minShrink,
+      thicken: settings.thicken,
       cacheDir: null, // the backend's own: ~/.cache/claude-inline-math
       maxColumns: batch[0]?.maxColumns ?? MAX_COLUMNS,
       ...setupOptions(),

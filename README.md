@@ -225,6 +225,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 | `baseline` | `0.773` | Where the font's baseline sits in a cell, from the top, as a fraction of the cell height. 0.773 is JetBrains Mono. |
 | `ptPx` | `3.4` | Formula size in pixels per TeX point. 3.4 matches a 12 pt font with 42 px cells. |
 | `minShrink` | `0.8` | How far an inline formula may shrink to stay on one row before it takes more rows. |
+| `thicken` | `1.8` | Makes the antialiased edges of TeX's thin strokes more opaque (alpha $a$ drawn as $1 - (1 - a)^{t}$), so formulas read as firmly as the terminal font. `1` draws them as TeX does. |
 | `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams. |
 | `packages` | empty | Extra TeX packages for every formula, separated by commas or spaces. A package that is not installed, or a bad name, is skipped and named in `/inline-math status`. |
 | `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. In `settings.json` write `\n` between lines and `\\` for each backslash. |
@@ -255,6 +256,7 @@ When the preamble still does not work, the mod keeps what works: your `macros` i
 - **Stop the daemon or rebuild the format.** `pkill -f renderd.py` stops the daemon; the next formula starts a new one. Deleting `~/.cache/claude-inline-math/fmt/` makes the next formula build the format again. Then run `/inline-math clear`.
 - **Formulas sit too high or too low.** Set `baseline` for your font, and `cell` if tmux reports the wrong size (`tmux display -p '#{client_cell_width}x#{client_cell_height}'`).
 - **Formulas are too large or too small.** Change `ptPx`.
+- **Formulas look faint or thin beside the text.** Raise `thicken` (2 to 2.5), or load a heavier math font with `packages` (`newtxmath`, `fourier`). On a desktop scaled by a fraction (1.25, 1.5) the compositor shrinks the whole window, which thins strokes further.
 - **One formula shows as text.** TeX refused it; `/inline-math status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
 - **A diagram shows as source.** The dim line under it says why. A wider window helps when it is too wide.
 - **Claude writes math in code blocks.** Check that `promptHint` is on; the note applies from the next turn.

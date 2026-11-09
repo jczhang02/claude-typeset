@@ -13,6 +13,7 @@ Request:
     {"items": [{"latex": str, "display": bool}, ...],
       "options": {"fg": "auto" | "#rrggbb", "cell": "auto" | "WxH",
                               "baseline": 0.773, "ptPx": 3.4, "minShrink": 0.8,
+                              "thicken": 1.8,
                               "cacheDir": str | null, "maxColumns": 255,
                               "packages": [str, ...], "macros": str}}
 
@@ -558,6 +559,7 @@ def parse_options(raw):
         'baseline': number('baseline', 0.773, 0.05, 0.95),
         'ptPx': number('ptPx', 3.4, 0.5, 20),
         'minShrink': number('minShrink', 0.8, MIN_SCALE, 1),
+        'thicken': number('thicken', 1.8, 1, 4),
         'maxColumns': int(number('maxColumns', MAX_BOX, 1, MAX_BOX)),
         'cacheDir': cache_dir if isinstance(cache_dir, str) and cache_dir else default_cache_dir(),
         'packages': packages,
@@ -2250,11 +2252,24 @@ def fit(img, depth, ratio, display, cfg, cell):
     columns = min(MAX_BOX, max(1, math.ceil((w + 2 * PAD) / cw)))
     canvas = Image.new('RGBA', (columns * cw, rows * ch), (0, 0, 0, 0))
     top = round(text_row * ch + baseline - ascent * scale)
-    canvas.paste(img.resize((w, h), Image.LANCZOS), ((columns * cw - w) // 2, top))
+    canvas.paste(thickened(img.resize((w, h), Image.LANCZOS), cfg['thicken']), ((columns * cw - w) // 2, top))
     png = encode(canvas)
     if png is None:
         return {'error': 'too large'}
     return {'png': png, 'columns': columns, 'rows': rows, 'textRow': text_row}
+
+
+def thickened(img, power):
+    """The picture with its part-covered pixels made more opaque: alpha a
+    becomes 1 - (1 - a)^power. TeX's thin strokes, antialiased to a pixel
+    or less, read as grey beside a terminal font; this firms them up, as a
+    terminal's font thickening does, without moving any edge (a pixel with
+    no ink stays clear, a solid one stays solid)."""
+    if power == 1:
+        return img
+    table = [round(255 * (1 - (1 - a / 255) ** power)) for a in range(256)]
+    img.putalpha(img.getchannel('A').point(table))
+    return img
 
 
 def crop_to_ink(img, depth):
@@ -2475,7 +2490,7 @@ def cache_key(latex, display, cell, fg, cfg, preamble_key):
     packages and the user's packages and macros (each changes how a formula
     looks, or whether it works)."""
     parts = [VERSION, latex, bool(display), list(cell), fg, cfg['baseline'], cfg['ptPx'],
-             cfg['minShrink'], cfg['maxColumns'], preamble_key]
+             cfg['minShrink'], cfg['thicken'], cfg['maxColumns'], preamble_key]
     return hashlib.sha256(json.dumps(parts).encode('utf-8')).hexdigest()
 
 

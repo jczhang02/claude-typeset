@@ -219,6 +219,11 @@ class CacheTest(Case):
         self.assertNotEqual(black['png'], white['png'])
         self.assertEqual(self.image(small).size, (small['columns'] * 10, small['rows'] * 20))
 
+    def test_key_depends_on_thicken(self):
+        plain = self.render(('x', False), thicken=1)['results'][0]
+        solid = self.render(('x', False), thicken=2)['results'][0]
+        self.assertNotEqual(plain['png'], solid['png'])
+
     def test_files_are_complete_json(self):
         self.render(('a', False), ('b', False))
         names = [name for name in os.listdir(self.tmp) if name.endswith('.json')]
@@ -735,6 +740,25 @@ class FitTest(Case):
         self.assertGreaterEqual(results[2]['rows'], 2)
         for result in results:
             self.assertTrue(0 <= result['textRow'] < result['rows'])
+
+    def test_thicken_makes_strokes_more_solid_and_keeps_the_shape(self):
+        def ink(result):
+            alpha = self.image(result).getchannel('A')
+            return [a for a in alpha.getdata() if a > 0], alpha.getbbox()
+
+        plain = self.render((r'\alpha + \frac{1}{n}', False), thicken=1)['results'][0]
+        solid = self.render((r'\alpha + \frac{1}{n}', False), thicken=2)['results'][0]
+        (plain_ink, plain_box), (solid_ink, solid_box) = ink(plain), ink(solid)
+        # The same pixels carry ink, in the same box of cells; each is as opaque or more.
+        self.assertEqual(len(plain_ink), len(solid_ink))
+        self.assertEqual(plain_box, solid_box)
+        self.assertEqual((plain['columns'], plain['rows'], plain['textRow']), (solid['columns'], solid['rows'], solid['textRow']))
+        self.assertGreater(sum(solid_ink) / len(solid_ink), sum(plain_ink) / len(plain_ink) * 1.2)
+
+    def test_thicken_one_draws_as_before(self):
+        self.assertEqual(render.parse_options({'thicken': 1})['thicken'], 1.0)
+        self.assertEqual(render.parse_options({})['thicken'], 1.8)
+        self.assertEqual(render.parse_options({'thicken': 99})['thicken'], 1.8)
 
     def test_canvas_is_whole_cells(self):
         results = self.render(('x^2', False), (r'\frac{a+b}{c}', False), (r'\sum_{k=0}^{n} k^2', True),

@@ -532,7 +532,7 @@ function statusText(health: Health): string {
     `${isEnabled() ? 'on' : 'off'} (${source})`,
     `backend: ${health.ok ? 'ready' : 'NOT READY'} - latex ${yesNo(health.latex)}, dvipng ${yesNo(health.dvipng)}, Pillow ${yesNo(health.pil)}`,
     ...health.problems.map(problem => `  problem: ${problem}`),
-    `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}`,
+    `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
     `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
     `daemon: ${daemonText(health)}`,
     `format: ${formatText(health)}`,
