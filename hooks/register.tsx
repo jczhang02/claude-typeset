@@ -153,40 +153,50 @@ function textRun(t: Table, run: Extract<Run, { kind: 'text' }>): RenderElement {
   )
   const body = style.link && linkFits(style.link) ? <Link href={style.link}>{text}</Link> : text
 
+  return lifted(t, run.marginTop, body)
+}
+
+/**
+ * `body` moved down `marginTop` rows. A run on the line's top row is drawn
+ * bare: every element costs the engine work on each scroll and redraw, and
+ * a long reply has hundreds of runs.
+ */
+function lifted(t: Table, marginTop: number, body: RenderElement): RenderElement {
+  const { Box } = t
+  if (marginTop === 0) return body
+
   return (
-    <Box marginTop={run.marginTop} flexShrink={0}>
+    <Box marginTop={marginTop} flexShrink={0}>
       {body}
     </Box>
   )
 }
 
 function drawRun(t: Table, run: Run): RenderElement {
-  const { Box, Text, Image } = t
+  const { Text, Image } = t
   if (run.kind === 'text') return textRun(t, run)
   if (run.kind === 'fallback') {
-    return (
-      <Box marginTop={run.marginTop} flexShrink={0}>
-        <Text dimColor={!run.isError} wrap="truncate">
-          {run.text}
-        </Text>
-      </Box>
+    return lifted(
+      t,
+      run.marginTop,
+      <Text dimColor={!run.isError} wrap="truncate">
+        {run.text}
+      </Text>,
     )
   }
 
-  return (
-    <Box marginTop={run.marginTop} flexShrink={0}>
-      <Image
-        source={{ png: run.picture.png }}
-        columns={run.picture.columns}
-        rows={run.picture.rows}
-        alt={altFor(run.latex, run.picture.columns)}
-      />
-    </Box>
+  return lifted(
+    t,
+    run.marginTop,
+    <Image source={{ png: run.picture.png }} columns={run.picture.columns} rows={run.picture.rows} alt={altFor(run.latex, run.picture.columns)} />,
   )
 }
 
 function drawLine(t: Table, line: Line): RenderElement {
   const { Box } = t
+  const [only] = line.runs
+  // A line of one run and one row needs no row of its own.
+  if (line.runs.length === 1 && only !== undefined && only.kind !== 'image' && only.marginTop === 0 && line.height === 1) return drawRun(t, only)
 
   return (
     <Box flexDirection="row" flexShrink={0} height={line.height}>
@@ -329,8 +339,10 @@ function drawBlocks(t: Table, blocks: Block[], picture: (ref: MathRef, width: nu
       // A picture on a continuation line sits after the hang: it gets the rest.
       const room = Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
       const lines = layoutParagraph(block, ref => picture(ref, room), width)
-      body = (
-        <Box flexDirection="column" flexShrink={0}>
+
+      // Its lines straight in the block's column: one element fewer per paragraph.
+      return (
+        <Box flexDirection="column" marginTop={marginTop} flexShrink={0}>
           {lines.map(line => drawLine(t, line))}
         </Box>
       )

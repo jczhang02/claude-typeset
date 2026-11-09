@@ -122,6 +122,21 @@ describe('replies', () => {
     await ui.unmount()
   })
 
+  test('runs on the top row of a line are drawn bare, without a box each', async ($, on) => {
+    const clock = mock.clock(on)
+    host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+
+    const ui = await $.ui.mount({ ...reply('a $x$ b $y$ c\n\nplain line'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(2)
+    // The frame (row, bullet, column), a box for each block, the row of pictures:
+    // no box per run.
+    expect(await ui.findAll({ type: 'Box' })).toHaveLength(6)
+    await ui.unmount()
+  })
+
   test('an item that opens with display math draws its marker beside the picture', async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on)
