@@ -25,7 +25,9 @@ export type Inline = { kind: 'text'; text: string; style: Style } | { kind: 'mat
 export type Block =
   | { kind: 'markdown'; text: string; indent?: number; gapBefore?: boolean }
   | { kind: 'paragraph'; inlines: Inline[]; marker?: string; indent: number; gapBefore?: boolean }
-  | { kind: 'display'; latex: string; indent: number; gapBefore?: boolean }
+  // `marker`: the formula opens a list item, so it sits on the marker's row,
+  // the marker drawn at `indent` and the formula after it.
+  | { kind: 'display'; latex: string; indent: number; marker?: string; gapBefore?: boolean }
   // A closed ```mermaid fence at the top level or in a list item: `source`
   // is its body, without the fences and the fence's own indentation.
   | { kind: 'mermaid'; source: string; indent: number; gapBefore?: boolean }
@@ -2578,9 +2580,10 @@ function emitParagraph(lines: string[], node: Node, marker: string | undefined, 
   for (const piece of pieces) {
     if (piece.kind === 'display') {
       if (first && marker) {
-        push(emit, { kind: 'paragraph', inlines: [], marker, indent })
+        push(emit, { kind: 'display', latex: piece.latex, indent, marker })
+      } else {
+        push(emit, { kind: 'display', latex: piece.latex, indent: marker || !first ? hang : indent })
       }
-      push(emit, { kind: 'display', latex: piece.latex, indent: marker || !first ? hang : indent })
       first = false
       continue
     }
@@ -2681,8 +2684,7 @@ function emitList(list: Extract<Node, { type: 'list' }>, indent: number, depth: 
         if (latex === '') {
           continue
         }
-        markerOnly()
-        push(emit, { kind: 'display', latex, indent: hang })
+        push(emit, markerLeft ? { kind: 'display', latex, indent, marker: markerLeft } : { kind: 'display', latex, indent: hang })
       } else {
         markerOnly()
         const converted = convertNodes([child], item.inner).slice(child.start, child.end)

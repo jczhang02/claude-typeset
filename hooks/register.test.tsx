@@ -122,6 +122,21 @@ describe('replies', () => {
     await ui.unmount()
   })
 
+  test('an item that opens with display math draws its marker beside the picture', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+
+    const ui = await $.ui.mount({ ...reply('- $$E=mc^2$$\n- next $a$'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.batches.flat()).toContainEqual({ latex: 'E=mc^2', display: true })
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(2)
+    // The marker, on its own beside the formula; no row of a marker alone.
+    expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['●', '- ', '- next '])
+    await ui.unmount()
+  })
+
   test('a formula TeX refuses stays readable text and is not asked for again', async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on)

@@ -195,19 +195,40 @@ function drawLine(t: Table, line: Line): RenderElement {
   )
 }
 
-function drawDisplay(t: Table, latex: string, indent: number, state: PictureState, width: number): RenderElement {
-  const { Box, Text, Image } = t
-  const room = Math.max(1, width - indent)
-  const body =
-    typeof state === 'object' && 'png' in state ? (
-      <Image source={{ png: state.png }} columns={state.columns} rows={state.rows} alt={altFor(latex, state.columns)} />
-    ) : (
-      <Text dimColor={state === 'pending'}>{toUnicode(latex)}</Text>
-    )
+/** The columns a display formula gets: after its indent and, when it opens a list item, the marker. */
+function displayRoom(block: Extract<Block, { kind: 'display' }>, width: number): number {
+  return Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
+}
 
-  return (
-    <Box marginLeft={indent} width={room} justifyContent="center" flexShrink={0}>
+function drawDisplay(t: Table, block: Extract<Block, { kind: 'display' }>, state: PictureState, width: number): RenderElement {
+  const { Box, Text, Image } = t
+  const { latex, indent, marker } = block
+  const isPicture = typeof state === 'object' && 'png' in state
+  const body = isPicture ? (
+    <Image source={{ png: state.png }} columns={state.columns} rows={state.rows} alt={altFor(latex, state.columns)} />
+  ) : (
+    <Text dimColor={state === 'pending'}>{toUnicode(latex)}</Text>
+  )
+  const centred = (
+    <Box width={displayRoom(block, width)} justifyContent="center" flexShrink={0}>
       {body}
+    </Box>
+  )
+  if (marker === undefined) {
+    return (
+      <Box marginLeft={indent} flexShrink={0}>
+        {centred}
+      </Box>
+    )
+  }
+
+  // The marker sits on the formula's text row, as a list marker beside text.
+  return (
+    <Box marginLeft={indent} flexDirection="row" flexShrink={0}>
+      <Box marginTop={isPicture ? state.textRow : 0} flexShrink={0}>
+        <Text>{marker}</Text>
+      </Box>
+      {centred}
     </Box>
   )
 }
@@ -301,7 +322,7 @@ function drawBlocks(t: Table, blocks: Block[], picture: (ref: MathRef, width: nu
           <Markdown text={block.text} />
         )
     } else if (block.kind === 'display') {
-      body = drawDisplay(t, block.latex, block.indent, picture({ latex: block.latex, display: true }, width - block.indent), width)
+      body = drawDisplay(t, block, picture({ latex: block.latex, display: true }, displayRoom(block, width)), width)
     } else if (block.kind === 'mermaid') {
       body = drawDiagram(t, block, width)
     } else {
@@ -394,7 +415,7 @@ function plan(text: string): Plan {
 /** Every picture the blocks will ask for, at the width each is drawn in (as drawBlocks asks). */
 function eachPicture(blocks: Block[], width: number, ask: (ref: MathRef, width: number) => void) {
   for (const block of blocks) {
-    if (block.kind === 'display') ask({ latex: block.latex, display: true }, width - block.indent)
+    if (block.kind === 'display') ask({ latex: block.latex, display: true }, displayRoom(block, width))
     if (block.kind !== 'paragraph') continue
     const room = Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
     for (const inline of block.inlines) if (inline.kind === 'math') ask({ latex: inline.latex, display: false }, room)

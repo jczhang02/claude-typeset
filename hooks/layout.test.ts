@@ -330,6 +330,28 @@ describe('parseMessage: lists', () => {
     ])
   })
 
+  test('an item that opens with display math draws it on the marker row', () => {
+    const blocks = parseMessage('- $$E=mc^2$$\n- next $a$')
+    expect(blocks[0]).toEqual({ kind: 'display', latex: 'E=mc^2', indent: 0, marker: '- ' })
+    expect(blocks[1]).toMatchObject({ kind: 'paragraph', marker: '- ' })
+    expect(blocks).toHaveLength(2)
+  })
+
+  test('an item that opens with a display block on its own lines draws it on the marker row', () => {
+    const blocks = parseMessage('1. $$\n   x^2\n   $$\n2. two $y$')
+    expect(blocks[0]).toEqual({ kind: 'display', latex: 'x^2', indent: 0, marker: '1. ' })
+    expect(blocks[1]).toMatchObject({ kind: 'paragraph', marker: '2. ' })
+    expect(blocks).toHaveLength(2)
+  })
+
+  test('display math after the item text still hangs under the text', () => {
+    const blocks = parseMessage('- see\n  $$x^2$$')
+    expect(blocks.map(block => [block.kind, 'marker' in block ? (block.marker ?? null) : null])).toEqual([
+      ['paragraph', '- '],
+      ['display', null],
+    ])
+  })
+
   test('a list without math stays verbatim markdown', () => {
     const text = '* a\n* b\n\n  c\n\n$x$'
     expect(parseMessage(text)[0]).toEqual({ kind: 'markdown', text: '* a\n* b\n\n  c' })
