@@ -52,13 +52,13 @@ The CJK packages are only needed for Chinese, Japanese or Korean text inside a f
 Type this at the Claude Code prompt, answer `y` to add the marketplace, then pick a scope (the user scope loads it in every session):
 
 ```text
-/plugin install typeset --marketplace jczhang02/claude-inline-math
+/plugin install typeset --marketplace jczhang02/claude-typeset
 ```
 
 Or from a shell:
 
 ```bash
-claude plugin install typeset --marketplace jczhang02/claude-inline-math
+claude plugin install typeset --marketplace jczhang02/claude-typeset
 ```
 
 **Inside tmux**, add these lines to `~/.config/tmux/tmux.conf` or `~/.tmux.conf`, then restart tmux:
@@ -82,17 +82,17 @@ set -g focus-events on
 <summary><strong>Run from a clone (for development)</strong></summary>
 
 ```bash
-git clone https://github.com/jczhang02/claude-inline-math ~/Documents/dev-tools/claude-inline-math
-claude --plugin-dir ~/Documents/dev-tools/claude-inline-math    # this session only
+git clone https://github.com/jczhang02/claude-typeset ~/Documents/dev-tools/claude-typeset
+claude --plugin-dir ~/Documents/dev-tools/claude-typeset    # this session only
 ```
 
 For every session, add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` (use `:` between several folders). Claude Code reloads the mod when you save a file. Use either this or the marketplace install, not both.
 
 ```json
-{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/Documents/dev-tools/claude-inline-math" } }
+{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/Documents/dev-tools/claude-typeset" } }
 ```
 
-Update an installed copy with `claude plugin update typeset@claude-inline-math`.
+Update an installed copy with `claude plugin update typeset@claude-typeset`.
 
 </details>
 
@@ -209,7 +209,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 ```json
 {
   "pluginConfigs": {
-    "typeset@claude-inline-math": {
+    "typeset@claude-typeset": {
       "options": {
         "packages": "physics, tensor",
         "macros": "\\newcommand{\\R}{\\mathbb{R}}\n\\DeclareMathOperator{\\tr}{tr}"
