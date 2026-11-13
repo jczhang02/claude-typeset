@@ -89,6 +89,10 @@ refuses it too, the error names both (`ParseError: ...; TeX: ! ...`).
   (`\reals`, `\R`, `\argmax`, `\upalpha`, `\Bra`...) and CSS colour
   names are defined too. A glyph missing from TeX's fonts is an error,
   not a blank.
+- **Unicode.** The Unicode symbols models write in formulas (Greek
+  letters, `≤`, `→`, `×`, `ℝ`, `²`...) are declared as their TeX math,
+  as RaTeX reads them, in math and in `\text`. KaTeX's own syntax (`#`
+  colours in `\color`, `\htmlClass`) is not rewritten for TeX.
 - **Scale and baseline.** dvipng rasters at `ptPx * 72.27 * 3` dpi, the
   scale RaTeX draws at, with `--depth` (which counts preview's border), so
   `fit.rs` places the picture with the same arithmetic, its baseline on

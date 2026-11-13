@@ -156,6 +156,8 @@ fn a_package_formula_falls_back_to_tex() {
         { "latex": r"\SI{9.81}{\meter\per\second\squared}", "display": false },
         { "latex": r"\dv{f}{x} + \qty(\frac{a}{b})", "display": true },
         { "latex": "x^2", "display": false },
+        // Unicode RaTeX takes, in math and in \text, beside a package command.
+        { "latex": "\\SI{3}{\\metre} × α ≤ x² \\text{at 25°C}", "display": false },
     ]);
     let off = render(
         items.clone(),
@@ -169,6 +171,7 @@ fn a_package_formula_falls_back_to_tex() {
     assert_eq!(on[0]["engine"], "tex", "{}", on[0]);
     assert_eq!(on[1]["engine"], "tex", "{}", on[1]);
     assert_eq!(on[2]["engine"], "ratex");
+    assert_eq!(on[3]["engine"], "tex", "{}", on[3]);
     // On one text row, as the old TeX backend drew it (8 columns, 1 row).
     assert_eq!((on[0]["rows"].as_u64(), on[0]["textRow"].as_u64()), (Some(1), Some(0)));
     assert!((7..=9).contains(&on[0]["columns"].as_u64().unwrap()), "{}", on[0]);
