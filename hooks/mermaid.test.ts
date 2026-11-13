@@ -374,9 +374,9 @@ describe('flowcharts', () => {
     const fan = ['flowchart TD', ...Array.from({ length: 120 }, (_, i) => `R --> L${i}`)]
     expect(refused(fan.join('\n'))).toContain('more than 100')
     const wide = `flowchart TD\n  R --> ${Array.from({ length: 14 }, (_, i) => `N${i}[step number ${i}]`).join(' & ')}`
-    expect(refused(wide, 60)).toContain('columns wide')
+    expect(refused(wide, 60)).toMatch(/^top-down: \d+ columns, 60 available$/)
     started = performance.now()
-    for (const width of [59, 50, 41, 30]) expect(refused(wide, width)).toContain('columns wide')
+    for (const width of [59, 50, 41, 30]) expect(refused(wide, width)).toMatch(new RegExp(`^top-down: \\d+ columns, ${width} available$`))
     expect(performance.now() - started).toBeLessThan(2)
   })
 
@@ -528,12 +528,24 @@ describe('refusals', () => {
   })
 
   test('too wide', () => {
-    expect(refused(chain(12, 'LR').replace('flowchart LR', 'flowchart TD').replace(/A0 -->/, 'A0 & Z1 & Z2 & Z3 & Z4 & Z5 -->'), 20)).toMatch(/^diagram is \d+ columns wide, 20 available$/)
+    expect(refused(chain(12, 'LR').replace('flowchart LR', 'flowchart TD').replace(/A0 -->/, 'A0 & Z1 & Z2 & Z3 & Z4 & Z5 -->'), 20)).toMatch(/^top-down: \d+ columns, 20 available$/)
   })
 
   test('too tall', () => {
-    expect(refused(chain(30, 'TD'), 40)).toMatch(/^diagram is \d+ (rows tall, limit 80|columns wide, 40 available)$/)
-    expect(refused(chain(30, 'TD'), 400)).toMatch(/^diagram is \d+ rows tall, limit 80$/)
+    expect(refused(chain(30, 'TD'), 40)).toMatch(/^top-down: \d+ (rows, limit 80|columns, 40 available)$/)
+    expect(refused(chain(30, 'TD'), 400)).toMatch(/^top-down: \d+ rows, limit 80$/)
+  })
+
+  test('each layout tried says which limit it broke', () => {
+    // Left-right stacks the 40 leaves in one column, too tall; top-down
+    // puts them in one row, too wide.
+    const fan = ['flowchart LR', ...Array.from({ length: 40 }, (_, i) => `  R --> N${i}[leaf ${i}]`)].join('\n')
+    expect(refused(fan, 100)).toMatch(/^left-right: \d+ rows, limit 80; top-down: \d+ columns, 100 available$/)
+    // Known to fail at narrower widths too, and said with the width asked for.
+    expect(refused(fan, 90)).toMatch(/^left-right: \d+ rows, limit 80; top-down: \d+ columns, 90 available$/)
+    // A diagram of another kind has one layout and says so plainly.
+    const talk = ['sequenceDiagram', ...Array.from({ length: 50 }, (_, i) => `  A->>B: message ${i}`)].join('\n')
+    expect(refused(talk, 100)).toMatch(/^diagram is \d+ rows tall, limit 80$/)
   })
 
   test('too long', () => {

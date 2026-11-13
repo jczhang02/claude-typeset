@@ -139,7 +139,7 @@ A closed ` ```mermaid ` block, at the top level of a reply or in a list item, is
 A diagram the mod cannot draw correctly is shown as source, with one dim line under it that says why, never as a drawing that says something the source does not:
 
 - Other kinds (`pie`, `gantt`, `mindmap`, ...) and blocks the library cannot parse.
-- Diagrams that are too big: more than 80 rows, 8000 characters or 150 lines, a flowchart of more than 100 nodes or 60 nodes in subgraphs, or wider than the reply.
+- Diagrams that are too big: more than 80 rows, 8000 characters or 150 lines, a flowchart of more than 100 nodes or 60 nodes in subgraphs, or wider than the reply. The reason names each layout tried and the limit it broke, such as `left-right: 82 rows, limit 80; top-down: 806 columns, 170 available`.
 - A few loops the layout cannot route: a cycle that enters a subgraph, edges both ways between two nodes of the same layer, an edge written twice, and a node with a self loop plus another loop.
 - A flowchart or state diagram whose drawing dropped an edge, an arrowhead or a label, put a line inside a box, or ran a line off the canvas, after the other layouts were tried.
 
