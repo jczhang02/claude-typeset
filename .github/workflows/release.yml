@@ -98,7 +98,11 @@ jobs:
           bin="renderer/target/$TARGET/release/typeset-render"
           file "$bin"
           case "$TARGET" in
-            *-linux-musl) file "$bin" | grep -Eq 'statically linked|static-pie linked' ;;
+            *-linux-musl)
+              case "$(file "$bin")" in
+                *'statically linked'* | *'static-pie linked'*) ;;
+                *) echo "::error::$TARGET is not linked statically"; exit 1 ;;
+              esac ;;
           esac
           # Run it where the runner can: Linux x86_64, macOS arm64.
           case "$TARGET" in
