@@ -49,7 +49,7 @@ const memo = new Map<string, DiagramResult>()
 // What a source's failures say about other widths: `always`, a failure no
 // width changes; else every width up to `failedAt` fails, and every width
 // below `below` too (the layouts draw() would try there are all wider).
-type Failed = { always?: string; failedAt: number; narrowest: number; below: number }
+type Failed = { always?: string; failedAt: number; below: number; layouts: Measured[] }
 const failures = new Map<string, Failed>()
 
 function remember<K, V>(map: Map<K, V>, key: K, value: V) {
@@ -69,7 +69,7 @@ function knownFailure(source: string, maxColumns: number): DiagramResult | undef
     return { ok: false, reason: failed.always }
   }
   if (maxColumns <= failed.failedAt || maxColumns < failed.below) {
-    return { ok: false, reason: `diagram is ${failed.narrowest} columns wide, ${maxColumns} available` }
+    return { ok: false, reason: sizeReason(failed.layouts, maxColumns) }
   }
 
   return undefined
@@ -87,13 +87,13 @@ export function renderMermaid(source: string, maxColumns: number): DiagramResult
   const outcome = draw(source, maxColumns)
   remember(memo, key, outcome.result)
   if (!outcome.result.ok && outcome.always) {
-    remember(failures, source, { always: outcome.result.reason, failedAt: 0, narrowest: 0, below: 0 })
-  } else if (!outcome.result.ok && outcome.narrowest !== undefined) {
+    remember(failures, source, { always: outcome.result.reason, failedAt: 0, below: 0, layouts: [] })
+  } else if (!outcome.result.ok && outcome.layouts !== undefined) {
     const before = failures.get(source)
     remember(failures, source, {
       failedAt: Math.max(maxColumns, before?.failedAt ?? 0),
-      narrowest: outcome.narrowest,
       below: Math.max(outcome.below ?? 0, before?.below ?? 0),
+      layouts: outcome.layouts,
     })
   }
 
@@ -711,7 +711,37 @@ function misplacedLine(rows: DiagramSegment[][]): boolean {
   return false
 }
 
-type Drawn = { result: DiagramResult; always?: boolean; narrowest?: number; below?: number }
+// `layouts`: what each layout tried measured, when none fitted the width.
+type Drawn = { result: DiagramResult; always?: boolean; below?: number; layouts?: Measured[] }
+
+// The best try of one layout: its rows when every try was too tall, else
+// the columns of its narrowest try that kept to MAX_ROWS. `name` is the
+// flowchart direction; other diagrams have one layout and no name.
+type Measured = { name?: string; rows: number; columns: number }
+
+const DIRECTION_NAMES: Record<string, string> = { TD: 'top-down', TB: 'top-down', BT: 'bottom-up', LR: 'left-right', RL: 'right-left' }
+
+/**
+ * Why no layout fitted: each layout tried and the limit it broke, e.g.
+ * "left-right: 143 rows, limit 80; top-down: 806 columns, 170 available".
+ */
+function sizeReason(layouts: Measured[], maxColumns: number): string {
+  const [only] = layouts
+  if (layouts.length === 1 && only?.name === undefined) {
+    return only === undefined || only.rows <= MAX_ROWS ? `diagram is ${only?.columns ?? 0} columns wide, ${maxColumns} available` : `diagram is ${only.rows} rows tall, limit ${MAX_ROWS}`
+  }
+
+  return layouts.map(m => `${m.name}: ${m.rows > MAX_ROWS ? `${m.rows} rows, limit ${MAX_ROWS}` : `${m.columns} columns, ${maxColumns} available`}`).join('; ')
+}
+
+/** `best` and a new try of the same layout: the one that came closer to fitting. */
+function closer(best: Measured | undefined, next: Measured): Measured {
+  if (best === undefined) return next
+  const fits = next.rows <= MAX_ROWS
+  if (best.rows > MAX_ROWS) return fits || next.rows < best.rows ? next : best
+
+  return fits && next.columns < best.columns ? next : best
+}
 
 function fail(reason: string, always: boolean): Drawn {
   return { result: { ok: false, reason }, always }
@@ -746,18 +776,20 @@ function draw(source: string, maxColumns: number): Drawn {
   // Wider than the space: try top-down for a left-right flowchart, then
   // tighter spacing. A layout that lost an edge is passed over too.
   const variants = [prepared]
+  const names: (string | undefined)[] = [kind === 'flowchart' ? DIRECTION_NAMES[/^flowchart (\w+)$/m.exec(prepared)?.[1] ?? 'TD'] : undefined]
   const sideways = /^flowchart (LR|RL)$/m
   if (kind === 'flowchart' && sideways.test(prepared)) {
     variants.push(prepared.replace(sideways, 'flowchart TD'))
+    names.push('top-down')
   }
-  let tallest = 0
+  const measured: (Measured | undefined)[] = variants.map(() => undefined)
   let narrowest = Infinity
   let cells = 0
   let tried = 0
   let isLost = false
   let isCut = false // tries left out by RETRY_CELLS, which no width changes
   for (const paddingX of [3, 1]) {
-    for (const variant of variants) {
+    for (const [v, variant] of variants.entries()) {
       if (cells > RETRY_CELLS || (paddingX === 1 && narrowest * 0.7 > maxColumns)) {
         isCut ||= cells > RETRY_CELLS
         break
@@ -772,8 +804,9 @@ function draw(source: string, maxColumns: number): Drawn {
         return fail(found.reason, true)
       }
       cells = Math.max(cells, found.rows.length * found.columns)
+      measured[v] = closer(measured[v], { name: names[v], rows: found.rows.length, columns: found.columns })
       if (found.rows.length > MAX_ROWS) {
-        tallest = tallest === 0 ? found.rows.length : Math.min(tallest, found.rows.length)
+        continue
       } else if (found.columns > maxColumns) {
         narrowest = Math.min(narrowest, found.columns)
       } else if ((kind === 'flowchart' || kind === 'state') && lostEdge(found.report, found.rows, encoded.glyphs)) {
@@ -792,8 +825,8 @@ function draw(source: string, maxColumns: number): Drawn {
   // every layout tried, or tries cut by size, that is `narrowest`; with the
   // tighter spacing skipped for being hopeless, 0.7 of it.
   const below = tried === 2 * variants.length || isCut ? narrowest : Math.floor(narrowest * 0.7)
+  const layouts = measured.filter((m): m is Measured => m !== undefined)
+  const reason = sizeReason(layouts, maxColumns)
 
-  return narrowest < Infinity
-    ? { result: { ok: false, reason: `diagram is ${narrowest} columns wide, ${maxColumns} available` }, narrowest, below }
-    : fail(`diagram is ${tallest} rows tall, limit ${MAX_ROWS}`, true)
+  return narrowest < Infinity ? { result: { ok: false, reason }, below, layouts } : fail(reason, true)
 }
