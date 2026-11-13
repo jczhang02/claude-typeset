@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 import { stringWidth } from './layout'
-import { isMermaidInfo, renderMermaid, type DiagramResult, type DiagramRole, type DiagramSegment } from './mermaid'
+import { isMermaidInfo, renderMermaid, treeRoute, treeRows, type DiagramResult, type DiagramRole, type DiagramSegment } from './mermaid'
 
 type Drawn = Extract<DiagramResult, { ok: true }>
 
@@ -583,5 +583,62 @@ describe('memo and speed', () => {
     }
     times.sort((a, b) => a - b)
     expect(times[3] as number).toBeLessThan(40)
+  })
+})
+
+describe('trees for the renderer', () => {
+  test('a mindmap always goes, with its markup and comments gone', () => {
+    expect(treeRoute('mindmap\n  root((主题))\n    %% note\n    **A** #quot;x#quot;\n    B')).toEqual({
+      kind: 'mindmap',
+      source: 'mindmap\n  root((主题))\n    A ”x”\n    B',
+    })
+  })
+
+  test('a flowchart goes when it looks like a tree that branches', () => {
+    const source = 'flowchart LR\n  R[根] --> A[一] & B[二]\n  A-->A1\n  中文 --> X\n  R --> 中文'
+    expect(treeRoute(source)).toEqual({ kind: 'tree', source })
+    expect(treeRoute('graph TD; R --> A; R --> B')?.kind).toBe('tree')
+  })
+
+  test('flowcharts that plainly are not trees stay here', () => {
+    for (const source of [
+      'flowchart TD\n  A --> C\n  B --> C', // two parents
+      'flowchart TD\n  R --> A\n  R --> B\n  B --> R', // a cycle
+      'flowchart TD\n  R --> A\n  R --> B\n  X --> Y\n  Y --> X', // a ring apart from the root
+      'flowchart TD\n  R -->|yes| A\n  R --> B', // an edge label
+      'flowchart TD\n  R -- yes --> A\n  R --> B',
+      'flowchart TD\n  R <--> A\n  R --> B', // both ways
+      'flowchart TD\n  subgraph S\n    R --> A\n    R --> B\n  end',
+      'flowchart TD\n  R --> A\n  R --> B\n  C', // two roots
+      'flowchart LR\n  A --> B --> C --> D', // never branches
+      'sequenceDiagram\n  A->>B: hi',
+    ]) {
+      expect(treeRoute(source)).toBeUndefined()
+    }
+  })
+
+  test('the tree drawn: root box as border, branches as edges, node text as labels', () => {
+    const result = treeRows(['╭──────╮', '│ 主题 │', '╰───┬──╯', '    │', '    ├── A │ B', '    │   └── A1', '    └── B'])
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.columns).toBe(14)
+    expect(result.rows[0]).toEqual([{ text: '╭──────╮', role: 'border' }])
+    expect(result.rows[1]).toEqual([
+      { text: '│ ', role: 'border' },
+      { text: '主题', role: 'label' },
+      { text: ' │', role: 'border' },
+    ])
+    expect(result.rows[3]).toEqual([
+      { text: '    ', role: 'text' },
+      { text: '│', role: 'edge' },
+    ])
+    // The '│' inside a label stays label.
+    expect(result.rows[4]).toEqual([
+      { text: '    ', role: 'text' },
+      { text: '├──', role: 'edge' },
+      { text: ' ', role: 'text' },
+      { text: 'A │ B', role: 'label' },
+    ])
+    expect(result.rows[5]?.at(-1)).toEqual({ text: 'A1', role: 'label' })
+    expect(result.rows[5]?.[1]).toEqual({ text: '│   └──', role: 'edge' })
   })
 })

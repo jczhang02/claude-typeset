@@ -7,7 +7,7 @@
 - What is in it: only the ASCII/Unicode renderer, `src/ascii/index.ts` and what it imports (35 modules: the flowchart, state, sequence, class, ER and xychart parsers and text renderers). The SVG renderer and its dependencies (`elkjs`, `entities`) are not in the bundle. No Node or DOM API is used on the path the mod calls: `detectColorMode`, the one function that reads `globalThis.process` or `document`, runs only when `colorMode` is not given, and `hooks/mermaid.ts` always gives it.
 - Exports used: `renderMermaidASCII(text, options)`, and `layoutReport()` (added by patch 6: what the last flowchart or state render dropped, drew and labelled). Types: `mermaid-ascii.d.ts` (written by hand, only what the mod uses).
 - sha256 of the shipped file: `fce92b31e20d3ab1731f0b5f1a29813c69bf9597513d7f0271c4e482c394c4de`
-- Supported diagram types in 1.1.3: `flowchart`/`graph`, `stateDiagram`/`stateDiagram-v2`, `sequenceDiagram`, `classDiagram`, `erDiagram`, `xychart-beta`. Everything else (pie, gantt, mindmap, ...) is refused by `hooks/mermaid.ts` before the library sees it. The xychart plot is a fixed 60 columns wide in this version (about 65-70 columns with the axis), so a narrower terminal shows the source with a reason.
+- Supported diagram types in 1.1.3: `flowchart`/`graph`, `stateDiagram`/`stateDiagram-v2`, `sequenceDiagram`, `classDiagram`, `erDiagram`, `xychart-beta`. Everything else (pie, gantt, mindmap, ...) is refused by `hooks/mermaid.ts` before the library sees it (a mindmap, and a flowchart shaped as a tree, are drawn by typeset-render instead). The xychart plot is a fixed 60 columns wide in this version (about 65-70 columns with the axis), so a narrower terminal shows the source with a reason.
 
 ### Patches
 
