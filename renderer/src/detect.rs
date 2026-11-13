@@ -91,9 +91,10 @@ impl NonBlocking for std::fs::OpenOptions {
 /// Cell size in pixels: the option, then tmux, then the tty, then 19x42.
 pub fn detect_cell(spec: &str) -> Cell {
     if spec != "auto"
-        && let Some(cell) = parse_cell(spec) {
-            return cell;
-        }
+        && let Some(cell) = parse_cell(spec)
+    {
+        return cell;
+    }
     if std::env::var_os("TMUX").is_some() {
         let out = quiet_run(
             &["tmux", "display", "-p", "#{client_cell_width}x#{client_cell_height}"],
