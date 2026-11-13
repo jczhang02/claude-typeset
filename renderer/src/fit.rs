@@ -12,6 +12,7 @@ use crate::protocol::{Cell, ItemResult, MAX_BOX, MIN_SCALE, Options};
 pub const SUPERSAMPLE: u32 = 3;
 const PAD: f64 = 2.0; // transparent pixels left and right of a formula
 const MAX_PNG: usize = 2 * 1024 * 1024;
+pub const MAX_PIXELS: u64 = 32_000_000; // largest picture an engine may hand over
 
 /// Ink in straight-alpha RGBA8, `depth` pixels of it below the baseline.
 #[derive(Debug, Clone)]
@@ -26,8 +27,8 @@ fn round_half_even(x: f64) -> f64 {
     x.round_ties_even()
 }
 
-/// The transparent border cut off, keeping the baseline inside.
-pub fn crop_to_ink(ink: &Ink) -> Ink {
+/// The box around the ink: (left, top, right, bottom), right and bottom exclusive.
+fn ink_box(ink: &Ink) -> Option<(usize, usize, usize, usize)> {
     let (w, h) = (ink.width as usize, ink.height as usize);
     let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0usize, 0usize);
     for y in 0..h {
@@ -40,9 +41,16 @@ pub fn crop_to_ink(ink: &Ink) -> Ink {
             }
         }
     }
-    if left == usize::MAX {
+    (left != usize::MAX).then_some((left, top, right, bottom))
+}
+
+/// The transparent border cut off, keeping the baseline inside.
+pub fn crop_to_ink(ink: &Ink) -> Ink {
+    let w = ink.width as usize;
+    let h = ink.height as usize;
+    let Some((left, top, right, bottom)) = ink_box(ink) else {
         return ink.clone();
-    }
+    };
     let base_row = ink.height as i64 - ink.depth;
     let top = (top as i64).min(base_row - 1);
     let bottom = (bottom as i64).max(base_row);
@@ -110,7 +118,13 @@ fn encode(rgba: &[u8], w: u32, h: u32) -> Option<String> {
 
 /// The picture for `ink` (drawn at SUPERSAMPLE times the terminal's scale).
 pub fn fit(ink: &Ink, display: bool, cfg: &Options, cell: Cell) -> ItemResult {
-    let ratio = f64::from(SUPERSAMPLE);
+    fit_at(ink, f64::from(SUPERSAMPLE), display, cfg, cell)
+}
+
+/// The picture for `ink` drawn at `ratio` times the terminal's scale (the
+/// TeX fallback's raster is SUPERSAMPLE times it but for dpi rounding, or
+/// less for a formula too large to draw whole).
+pub fn fit_at(ink: &Ink, ratio: f64, display: bool, cfg: &Options, cell: Cell) -> ItemResult {
     let (cw, ch) = (f64::from(cell.width), f64::from(cell.height));
     let baseline = cfg.baseline * ch;
     let ink = crop_to_ink(ink);
@@ -182,7 +196,114 @@ pub fn fit(ink: &Ink, display: bool, cfg: &Options, cell: Cell) -> ItemResult {
             columns,
             rows,
             text_row,
+            engine: String::new(),
         },
         None => ItemResult::failure("too large"),
     }
+}
+
+/// The picture for a block (a TikZ picture) drawn at `ratio` times the
+/// terminal's scale: cropped to its ink, scaled down to fit `max_columns`
+/// and `max_rows`, centred on a canvas of whole cells. No baseline: it
+/// stands alone, as a display formula does.
+pub fn fit_block(ink: &Ink, ratio: f64, cfg: &Options, cell: Cell, max_rows: u32) -> ItemResult {
+    let (cw, ch) = (f64::from(cell.width), f64::from(cell.height));
+    let Some((left, top, right, bottom)) = ink_box(ink) else {
+        return ItemResult::failure("the picture is empty");
+    };
+    let (iw, ih) = (right - left, bottom - top);
+    let mut cropped = vec![0u8; iw * ih * 4];
+    for y in 0..ih {
+        let src = ((top + y) * ink.width as usize + left) * 4;
+        cropped[y * iw * 4..(y + 1) * iw * 4].copy_from_slice(&ink.rgba[src..src + iw * 4]);
+    }
+    let ink = Ink {
+        rgba: cropped,
+        width: iw as u32,
+        height: ih as u32,
+        depth: 0,
+    };
+    let (width, height) = (iw as f64 / ratio, ih as f64 / ratio);
+    let scale = 1f64
+        .min((f64::from(cfg.max_columns) * cw - 2.0 * PAD - 1.0) / width.max(1.0))
+        .min((f64::from(max_rows) * ch - 2.0) / height.max(1.0));
+    if scale < MIN_SCALE {
+        return ItemResult::failure("too large to fit the reply");
+    }
+    let w = round_half_even(width * scale).max(1.0) as u32;
+    let h = round_half_even(height * scale).max(1.0) as u32;
+    let columns = ((f64::from(w) + 2.0 * PAD) / cw).ceil().clamp(1.0, f64::from(MAX_BOX)) as u32;
+    let rows = ((f64::from(h) + 2.0) / ch).ceil().clamp(1.0, f64::from(max_rows)) as u32;
+    let (canvas_w, canvas_h) = (columns * cell.width, rows * cell.height);
+    let mut small = match resize(&ink, w, h) {
+        Ok(pixels) => pixels,
+        Err(err) => return ItemResult::failure(format!("renderer picture failed: {err}")),
+    };
+    thicken(&mut small, cfg.thicken);
+    let left = (canvas_w.saturating_sub(w) / 2) as usize;
+    let top = (canvas_h.saturating_sub(h) / 2) as usize;
+    let mut canvas = vec![0u8; canvas_w as usize * canvas_h as usize * 4];
+    for y in 0..(h as usize).min(canvas_h as usize - top) {
+        let n = (w as usize).min(canvas_w as usize - left) * 4;
+        let s = y * w as usize * 4;
+        let d = ((top + y) * canvas_w as usize + left) * 4;
+        canvas[d..d + n].copy_from_slice(&small[s..s + n]);
+    }
+    match encode(&canvas, canvas_w, canvas_h) {
+        Some(png) => ItemResult::Picture {
+            png,
+            columns,
+            rows,
+            text_row: 0,
+            engine: String::new(),
+        },
+        None => ItemResult::failure("too large to pass back"),
+    }
+}
+
+/// A PNG's width and height from its header, before any decoding.
+pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let at = |i: usize| u32::from_be_bytes([png[i], png[i + 1], png[i + 2], png[i + 3]]);
+    Some((at(16), at(20)))
+}
+
+/// A PNG as straight-alpha RGBA8: (pixels, width, height). One larger than
+/// MAX_PIXELS is refused from its header.
+pub fn decode(png: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let (w, h) = png_size(png).ok_or("renderer picture failed: not a PNG")?;
+    if u64::from(w) * u64::from(h) > MAX_PIXELS {
+        return Err("too large".into());
+    }
+    let mut decoder = png::Decoder::new(png);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("renderer picture failed: {e}"))?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("renderer picture failed: {e}"))?;
+    buf.truncate(info.buffer_size());
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        png::ColorType::Indexed => return Err("renderer picture failed: indexed PNG".into()),
+    };
+
+    Ok((rgba, info.width, info.height))
 }

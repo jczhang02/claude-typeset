@@ -131,7 +131,7 @@ pub fn typeset(latex: &str, display: bool, fg: [f32; 3], pt_px: f64, macros: &st
         ..Default::default()
     };
     let png = render_to_png(&list, &render)?;
-    let (rgba, width, height) = decode(&png)?;
+    let (rgba, width, height) = crate::fit::decode(&png)?;
     // The pixmap's top is the top of the box: the baseline is `height` em down.
     let base_row = ((list.height * em) as f32).round().clamp(0.0, height as f32) as u32;
 
@@ -141,39 +141,6 @@ pub fn typeset(latex: &str, display: bool, fg: [f32; 3], pt_px: f64, macros: &st
         height,
         depth: height as i64 - i64::from(base_row),
     })
-}
-
-/// A PNG as straight-alpha RGBA8: (pixels, width, height).
-fn decode(png: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
-    let mut decoder = png::Decoder::new(png);
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| format!("renderer picture failed: {e}"))?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| format!("renderer picture failed: {e}"))?;
-    buf.truncate(info.buffer_size());
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .flat_map(|p| [p[0], p[0], p[0], p[1]])
-            .collect(),
-        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::Indexed => return Err("renderer picture failed: indexed PNG".into()),
-    };
-
-    Ok((rgba, info.width, info.height))
 }
 
 #[cfg(test)]

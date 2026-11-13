@@ -5,16 +5,30 @@
 //! minShrink 0.7: columns, rows and the text row. The new engine must place
 //! formulas on the same cells, give or take one, with the baseline on the
 //! same row.
+//!
+//! The TeX fallback's tests need TeX Live on PATH (latex and dvipng; dvips,
+//! Ghostscript and tikz-cd for pictures); without it they print a note and
+//! pass. Each run gets a cache folder of its own, so no test sees another's
+//! TeX pictures and none reaches ~/.cache.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 fn run(args: &[&str], stdin: &str) -> Value {
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    let cache = std::env::temp_dir().join(format!(
+        "typeset-test-cache-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut child = Command::new(env!("CARGO_BIN_EXE_typeset-render"))
         .args(args)
         .env("TMUX", "") // never ask a tmux server the test happens to run under
+        .env("XDG_CACHE_HOME", &cache)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -22,8 +36,34 @@ fn run(args: &[&str], stdin: &str) -> Value {
         .expect("the program starts");
     child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
     assert!(out.status.success(), "exit status {:?}", out.status);
     serde_json::from_slice(&out.stdout).expect("JSON on stdout")
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+}
+
+/// Whether the TeX fallback can run here; prints a note when it cannot.
+fn tex_here(test: &str) -> bool {
+    let found = on_path("latex") && on_path("dvipng");
+    if !found {
+        eprintln!("note: {test} skipped, latex or dvipng is not on PATH");
+    }
+    found
+}
+
+/// Whether TeX pictures (tikz-cd, ```tikz blocks) can be drawn here.
+fn pictures_here(test: &str) -> bool {
+    let found = tex_here(test) && on_path("dvips") && on_path("gs") && on_path("kpsewhich") && {
+        let out = Command::new("kpsewhich").arg("tikz-cd.sty").output();
+        out.is_ok_and(|o| o.status.success())
+    };
+    if !found {
+        eprintln!("note: {test} skipped, dvips, Ghostscript or tikz-cd is missing");
+    }
+    found
 }
 
 fn render(items: Value, options: Value) -> Vec<Value> {
@@ -93,8 +133,114 @@ fn the_users_macros_are_defined() {
 
 #[test]
 fn a_runaway_macro_stops() {
-    let results = render(json!([{ "latex": r"\def\a{\a}\a", "display": false }]), options());
+    let results = render(
+        json!([{ "latex": r"\def\a{\a}\a", "display": false }]),
+        json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false }),
+    );
     assert!(results[0]["error"].is_string());
+}
+
+#[test]
+fn a_package_formula_falls_back_to_tex() {
+    let items = json!([
+        { "latex": r"\SI{9.81}{\meter\per\second\squared}", "display": false },
+        { "latex": r"\dv{f}{x} + \qty(\frac{a}{b})", "display": true },
+        { "latex": "x^2", "display": false },
+    ]);
+    let off = render(
+        items.clone(),
+        json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false }),
+    );
+    assert!(off[0]["error"].as_str().unwrap().contains(r"\SI"), "{}", off[0]);
+    if !tex_here("a_package_formula_falls_back_to_tex") {
+        return;
+    }
+    let on = render(items, options());
+    assert_eq!(on[0]["engine"], "tex", "{}", on[0]);
+    assert_eq!(on[1]["engine"], "tex", "{}", on[1]);
+    assert_eq!(on[2]["engine"], "ratex");
+    // On one text row, as the old TeX backend drew it (8 columns, 1 row).
+    assert_eq!((on[0]["rows"].as_u64(), on[0]["textRow"].as_u64()), (Some(1), Some(0)));
+    assert!((7..=9).contains(&on[0]["columns"].as_u64().unwrap()), "{}", on[0]);
+}
+
+#[test]
+fn tex_cannot_read_files_outside_its_folder() {
+    if !tex_here("tex_cannot_read_files_outside_its_folder") {
+        return;
+    }
+    // Were the file read, its first line and a 200 pt rule would draw: far
+    // more than the two columns of a lone x.
+    let read = r"\newread\r \openin\r=/etc/hostname \ifeof\r x\else \read\r to\l \text{\l}\rule{200pt}{10pt}\fi";
+    let results = render(
+        json!([
+            { "latex": read, "display": false },
+            { "latex": r"\input{/etc/hostname}", "display": false },
+            { "latex": r"\input{../../../../../../etc/hostname}", "display": false },
+        ]),
+        options(),
+    );
+    assert!(
+        results[0]["error"].is_string() || results[0]["columns"].as_u64() <= Some(2),
+        "{}",
+        results[0]
+    );
+    assert!(results[1]["error"].is_string(), "{}", results[1]);
+    assert!(results[2]["error"].is_string(), "{}", results[2]);
+}
+
+#[test]
+fn tex_in_an_endless_loop_is_stopped_by_the_time_limit() {
+    if !tex_here("tex_in_an_endless_loop_is_stopped_by_the_time_limit") {
+        return;
+    }
+    let started = Instant::now();
+    let results = render(json!([{ "latex": r"\def\a{\a}\a", "display": false }]), options());
+    let error = results[0]["error"].as_str().unwrap();
+    assert!(error.contains("TeX took longer than"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
+}
+
+#[test]
+fn a_tikz_cd_diagram_draws_through_tex() {
+    if !pictures_here("a_tikz_cd_diagram_draws_through_tex") {
+        return;
+    }
+    let diagram = r#"\begin{tikzcd} A \arrow[r, "f"] \arrow[d] & B \arrow[d] \\ C \arrow[r] & D \end{tikzcd}"#;
+    let results = render(json!([{ "latex": diagram, "display": true }]), options());
+    assert_eq!(results[0]["engine"], "tex", "{}", results[0]);
+    assert!(results[0]["rows"].as_u64().unwrap() >= 3, "{}", results[0]);
+    let off = render(
+        json!([{ "latex": diagram, "display": true }]),
+        json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false }),
+    );
+    assert!(off[0]["error"].as_str().unwrap().contains("texFallback"), "{}", off[0]);
+}
+
+#[test]
+fn a_tikz_block_draws_as_a_picture_that_fits() {
+    if !pictures_here("a_tikz_block_draws_as_a_picture_that_fits") {
+        return;
+    }
+    let picture = "\\usetikzlibrary{arrows.meta}\n\\draw[-{Stealth}] (0,0) -- (12,3) node[right] {$x^2$};\n\\draw (0,0) circle (1);";
+    let tall = "\\draw (0,0) -- (0,40);";
+    let results = render(
+        json!([
+            { "latex": picture, "kind": "tikz" },
+            { "latex": tall, "kind": "tikz" },
+            { "latex": "\\usepackage{shellesc}\n\\draw (0,0) -- (1,1);", "kind": "tikz" },
+        ]),
+        json!({ "fg": "#4c4f69", "cell": "19x42", "maxColumns": 40 }),
+    );
+    assert_eq!(results[0]["engine"], "tex", "{}", results[0]);
+    assert!(results[0]["columns"].as_u64().unwrap() <= 40, "{}", results[0]);
+    assert!(results[0]["png"].as_str().unwrap().starts_with("iVBORw0KGgo"));
+    assert_eq!(results[1]["rows"].as_u64(), Some(80), "{}", results[1]);
+    assert!(
+        results[2]["error"].as_str().unwrap().contains("shellesc"),
+        "{}",
+        results[2]
+    );
 }
 
 #[test]
@@ -125,7 +271,13 @@ fn check_reports_a_working_engine() {
     let health = run(&["--check"], &json!({ "options": options() }).to_string());
     assert_eq!(health["ok"], true, "{health}");
     assert_eq!(health["engine"], "ratex");
-    assert!(health["problems"].as_array().unwrap().is_empty());
+    assert_eq!(health["texFallback"], true);
+    assert_eq!(health["tex"]["latex"], on_path("latex"));
+    assert_eq!(health["tex"]["gs"], on_path("gs"));
+    assert!(health["problems"].as_array().unwrap().is_empty(), "{health}");
+    if tex_here("check_reports_a_working_engine") {
+        assert_eq!(health["tex"]["works"], true, "{health}");
+    }
 }
 
 #[test]
@@ -144,9 +296,16 @@ fn places_the_corpus_on_the_cells_the_old_backend_did() {
         .map(|it| json!({ "latex": it["latex"], "display": it["display"] }))
         .collect();
     let results = render(Value::Array(request), options());
-    let (mut compared, mut close, mut same_row) = (0, 0, 0);
+    let (mut compared, mut close, mut same_row, mut by_tex) = (0, 0, 0, 0);
     let mut far = Vec::new();
+    let mut missing = Vec::new();
     for (old, new) in items.iter().zip(&results) {
+        if new["engine"] == "tex" {
+            by_tex += 1;
+        }
+        if old["corpus"] == "claude" && old.get("error").is_none() && new.get("error").is_some() {
+            missing.push(old["latex"].as_str().unwrap().to_string());
+        }
         if old.get("error").is_some() || new.get("error").is_some() {
             continue;
         }
@@ -163,7 +322,16 @@ fn places_the_corpus_on_the_cells_the_old_backend_did() {
     }
     let close_share = f64::from(close) / f64::from(compared);
     let row_share = f64::from(same_row) / f64::from(compared);
-    eprintln!("{compared} compared, {close} within one cell, {same_row} on the same text row");
+    eprintln!(
+        "{compared} compared, {close} within one cell, {same_row} on the same text row; {by_tex} drawn by the TeX fallback"
+    );
+    if tex_here("the TeX part of the corpus test") {
+        assert!(
+            missing.is_empty(),
+            "Claude's formulas the old backend drew: {missing:?}"
+        );
+        assert!(by_tex >= 6, "only {by_tex} drawn by TeX");
+    }
     assert!(compared > 1400, "only {compared} formulas drawn by both");
     assert!(close_share >= 0.97, "{close_share:.3} within one cell; far: {far:?}");
     assert!(row_share >= 0.99, "{row_share:.3} on the same text row");

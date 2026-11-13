@@ -1,0 +1,239 @@
+% Definitions every TeX fallback run has, after the packages and the user's
+% own macros (so \providecommand keeps theirs, and a package's). Ported from
+% the Python backend's COMPAT blocks.
+%
+% Commands models use without defining them, physics' forms among them
+% (\dv, \pdv, \dd, \vb, \qty...), defined here without the physics package,
+% which would redefine \div, \Re and \Im; a user who lists physics in
+% `packages` gets the package's own.
+\providecommand\R{\mathbb{R}}\providecommand\N{\mathbb{N}}
+\providecommand\Z{\mathbb{Z}}\providecommand\Q{\mathbb{Q}}
+\providecommand\C{\mathbb{C}}\providecommand\E{\mathbb{E}}
+% physics' forms (a user's own physics package, loaded before this, wins):
+% \dd[3]{x}, \vb*{x} (bold italic).
+\ProvideDocumentCommand\dd{o}{\mathop{}\!\mathrm{d}\IfValueT{#1}{^{#1}}}
+\ProvideDocumentCommand\vb{s m}{\IfBooleanTF{#1}{\bm{#2}}{\mathbf{#2}}}
+\providecommand\vdot{\cdot}\providecommand\cross{\times}\providecommand\cp{\times}
+\providecommand\grad{\nabla}
+\providecommand\argmax{\operatorname*{arg\,max}}
+\providecommand\argmin{\operatorname*{arg\,min}}
+\providecommand\sgn{\operatorname{sgn}}\providecommand\sign{\operatorname{sign}}
+\providecommand\diag{\operatorname{diag}}\providecommand\rank{\operatorname{rank}}
+\providecommand\tr{\operatorname{tr}}\providecommand\Tr{\operatorname{Tr}}
+\providecommand\Var{\operatorname{Var}}\providecommand\Cov{\operatorname{Cov}}
+\providecommand\supp{\operatorname{supp}}\providecommand\Span{\operatorname{span}}
+\providecommand\softmax{\operatorname{softmax}}
+\providecommand\erf{\operatorname{erf}}
+\providecommand\lt{<}\providecommand\gt{>}
+\providecommand\degree{{}^\circ}\providecommand\celsius{{}^\circ\mathrm{C}}
+\providecommand\ohm{\Omega}\providecommand\micro{\mu}
+\providecommand\euro{\text{\texteuro}}
+\providecommand\T{\mathsf{T}}\providecommand\mathbbm{\mathds}
+\providecommand\Alpha{\mathrm{A}}\providecommand\Beta{\mathrm{B}}
+\providecommand\Epsilon{\mathrm{E}}\providecommand\Zeta{\mathrm{Z}}
+\providecommand\Eta{\mathrm{H}}\providecommand\Iota{\mathrm{I}}
+\providecommand\Kappa{\mathrm{K}}\providecommand\Mu{\mathrm{M}}
+\providecommand\Nu{\mathrm{N}}\providecommand\Omicron{\mathrm{O}}
+\providecommand\Rho{\mathrm{P}}\providecommand\Tau{\mathrm{T}}
+\providecommand\Chi{\mathrm{X}}\providecommand\omicron{o}
+\providecommand\set[1]{\left\{#1\right\}}\providecommand\Set[1]{\left\{\,#1\,\right\}}
+% \abs and \norm grow with their content, as physics and MathJax draw them
+% (\abs{\frac{a}{b}}); the starred form too (mathtools' meaning of the star),
+% and [\big] picks a size. A name a user package defined (physics) is kept.
+\ifdefined\abs\else
+  \NewDocumentCommand\abs{s o m}{\IfValueTF{#2}{\mathopen{#2\lvert}#3\mathclose{#2\rvert}}%
+    {\left\lvert#3\right\rvert}}
+\fi
+\ifdefined\norm\else
+  \NewDocumentCommand\norm{s o m}{\IfValueTF{#2}{\mathopen{#2\lVert}#3\mathclose{#2\rVert}}%
+    {\left\lVert#3\right\rVert}}
+\fi
+\ifdefined\DeclarePairedDelimiter
+  \ifdefined\floor\else\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}\fi
+  \ifdefined\ceil\else\DeclarePairedDelimiter\ceil{\lceil}{\rceil}\fi
+\fi
+\providecommand\bra[1]{\left\langle #1\right\rvert}
+\providecommand\ket[1]{\left\lvert #1\right\rangle}
+\makeatletter
+\providecommand\braket[1]{\@ifnextchar\bgroup{\im@braket{#1}}{\left\langle #1\right\rangle}}
+\newcommand\im@braket[2]{\left\langle #1\middle\vert #2\right\rangle}
+\newcommand\im@order[1]{\if\relax\detokenize{#1}\relax\else^{#1}\fi}
+% \dv[n]{x}, \dv[n]{f}{x}; \pdv{f}{x}{y} is the mixed derivative.
+\newcommand\im@dv[4]{\@ifnextchar\bgroup{#4{#1}{#2}{#3}}%
+    {\frac{#1\im@order{#2}}{#1#3\im@order{#2}}}}
+\newcommand\im@dvof[4]{\frac{#1\im@order{#2}#3}{#1#4\im@order{#2}}}
+\newcommand\im@pdvof[4]{\@ifnextchar\bgroup{\im@pdvmix{#1}{#3}{#4}}{\im@dvof{#1}{#2}{#3}{#4}}}
+\newcommand\im@pdvmix[4]{\frac{#1^{2}#2}{#1#3\,#1#4}}
+\providecommand\dv[2][]{\im@dv{\mathrm{d}}{#1}{#2}\im@dvof}
+\providecommand\pdv[2][]{\im@dv{\partial}{#1}{#2}\im@pdvof}
+\makeatother
+% What KaTeX and MathJax know that LaTeX does not: their aliases, and
+% approximations of their own commands. A missing glyph is an error
+% (\tracinglostchars), not a blank.
+\tracinglostchars=3
+\providecommand\darr{\downarrow}\providecommand\dArr{\Downarrow}\providecommand\Darr{\Downarrow}
+\providecommand\uarr{\uparrow}\providecommand\uArr{\Uparrow}\providecommand\Uarr{\Uparrow}
+\providecommand\larr{\leftarrow}\providecommand\lArr{\Leftarrow}\providecommand\Larr{\Leftarrow}
+\providecommand\rarr{\rightarrow}\providecommand\rArr{\Rightarrow}\providecommand\Rarr{\Rightarrow}
+\providecommand\harr{\leftrightarrow}\providecommand\hArr{\Leftrightarrow}\providecommand\Harr{\Leftrightarrow}
+\providecommand\lrarr{\leftrightarrow}\providecommand\lrArr{\Leftrightarrow}\providecommand\Lrarr{\Leftrightarrow}
+\providecommand\lang{\langle}\providecommand\rang{\rangle}
+\providecommand\sub{\subset}\providecommand\sube{\subseteq}\providecommand\supe{\supseteq}
+\providecommand\infin{\infty}\providecommand\isin{\in}\providecommand\notni{\not\ni}
+\providecommand\natnums{\mathbb{N}}\providecommand\reals{\mathbb{R}}\providecommand\Reals{\mathbb{R}}
+\providecommand\Complex{\mathbb{C}}\providecommand\cnums{\mathbb{C}}
+\providecommand\alef{\aleph}\providecommand\alefsym{\aleph}\providecommand\exist{\exists}
+\providecommand\image{\Im}\providecommand\real{\Re}\providecommand\weierp{\wp}
+\providecommand\thetasym{\vartheta}\providecommand\plusmn{\pm}\providecommand\sdot{\cdot}
+\providecommand\bull{\bullet}\providecommand\clubs{\clubsuit}\providecommand\diamonds{\diamondsuit}
+\providecommand\hearts{\heartsuit}\providecommand\spades{\spadesuit}\providecommand\Dagger{\ddagger}
+\providecommand\sect{\S}\providecommand\sixptsize{\scriptsize}
+\providecommand\ch{\operatorname{ch}}\providecommand\sh{\operatorname{sh}}
+\providecommand\cth{\operatorname{cth}}\providecommand\tg{\operatorname{tg}}
+\providecommand\ctg{\operatorname{ctg}}\providecommand\cotg{\operatorname{cotg}}
+\providecommand\arctg{\operatorname{arctg}}\providecommand\arcctg{\operatorname{arcctg}}
+\providecommand\cosec{\operatorname{cosec}}\providecommand\plim{\operatorname*{plim}}
+\providecommand\Bra[1]{\left\langle #1\right\rvert}\providecommand\Ket[1]{\left\lvert #1\right\rangle}
+\providecommand\coloncolon{\dblcolon}\providecommand\colonequals{\coloneqq}
+\providecommand\colonminus{\coloneq}\providecommand\coloncolonequals{\Coloneqq}
+\providecommand\coloncolonminus{\Coloneq}\providecommand\equalscolon{\eqqcolon}
+\providecommand\equalscoloncolon{\Eqqcolon}\providecommand\minuscolon{\eqcolon}
+\providecommand\minuscoloncolon{\Eqcolon}\providecommand\coloncolonapprox{\Colonapprox}
+\providecommand\coloncolonsim{\Colonsim}
+\providecommand\approxcoloncolon{\mathrel{\approx\mathrel{\mkern-1.2mu}\dblcolon}}
+\providecommand\simcoloncolon{\mathrel{\sim\mathrel{\mkern-1.2mu}\dblcolon}}
+\providecommand\lBrace{\mathopen{\{\mkern-6.5mu\{}}\providecommand\rBrace{\mathclose{\}\mkern-6.5mu\}}}
+\providecommand\origof{\mathrel{\circ\mkern-3mu\relbar\mkern-3mu\bullet}}
+\providecommand\imageof{\mathrel{\bullet\mkern-3mu\relbar\mkern-3mu\circ}}
+\providecommand\KaTeX{\text{K\kern-.17em\raisebox{.21em}{\scriptsize A}\kern-.15em T\kern-.1667em%
+  \raisebox{-.5ex}{E}\kern-.125em X}}
+\providecommand\angl[1]{{\left.\overline{#1\,}\right\rvert}}\providecommand\angln{\angl{n}}
+\providecommand\phase[1]{\mathord{\underline{\smash{/}\mkern-2mu#1}}}
+\DeclareMathAlphabet{\mathsfit}{OT1}{lmss}{m}{sl}
+\DeclareTextSymbolDefault{\th}{T1}\DeclareTextSymbolDefault{\TH}{T1}
+\DeclareTextSymbolDefault{\dh}{T1}\DeclareTextSymbolDefault{\DH}{T1}
+\DeclareTextSymbolDefault{\ng}{T1}\DeclareTextSymbolDefault{\NG}{T1}
+\DeclareFontFamily{U}{mathx}{\hyphenchar\font45}
+\DeclareFontShape{U}{mathx}{m}{n}{<-> mathx10}{}
+\makeatletter
+% Text commands that also work in math, as in KaTeX.
+\newcommand\im@text[1]{\ifmmode\text{#1}\else#1\fi}
+\NewCommandCopy\im@TeX\TeX\DeclareRobustCommand\TeX{\im@text\im@TeX}
+\NewCommandCopy\im@LaTeX\LaTeX\DeclareRobustCommand\LaTeX{\im@text\im@LaTeX}
+\NewCommandCopy\im@th\th\DeclareRobustCommand\th{\im@text\im@th}
+% Arrows and accents of KaTeX, built as amsmath builds its own.
+\def\im@Rightarrowfill{\arrowfill@\Relbar\Relbar\Rightarrow}
+\def\im@lharpoonfill{\arrowfill@\leftharpoonup\relbar\relbar}
+\def\im@rharpoonfill{\arrowfill@\relbar\relbar\rightharpoonup}
+\def\im@segmentfill{\arrowfill@{\mapstochar\relbar}\relbar{\relbar\mkern-3.5mu\mapstochar\mkern3.5mu}}
+\providecommand\Overrightarrow{\mathpalette{\overarrow@\im@Rightarrowfill}}
+\providecommand\overleftharpoon{\mathpalette{\overarrow@\im@lharpoonfill}}
+\providecommand\overrightharpoon{\mathpalette{\overarrow@\im@rharpoonfill}}
+\providecommand\overlinesegment{\mathpalette{\overarrow@\im@segmentfill}}
+\providecommand\underlinesegment{\mathpalette{\underarrow@\im@segmentfill}}
+\def\im@groupfill#1#2{$\m@th\setbox\z@\hbox{$#1$}#1\leaders\vrule\@height\ht\z@\@depth\z@\hfill#2$}
+\providecommand\overgroup[1]{\mathop{\vbox{\m@th\ialign{##\crcr\noalign{\kern3\p@}%
+  \im@groupfill\braceld\bracerd\crcr\noalign{\kern3\p@\nointerlineskip}%
+  $\hfil\displaystyle{#1}\hfil$\crcr}}}\limits}
+\providecommand\undergroup[1]{\mathop{\vtop{\m@th\ialign{##\crcr$\hfil\displaystyle{#1}\hfil$\crcr
+  \noalign{\kern3\p@\nointerlineskip}\im@groupfill\bracelu\braceru\crcr\noalign{\kern3\p@}}}}\limits}
+\newcommand\im@utilde[2]{\vtop{\m@th\ialign{##\crcr$\hfil#1#2\hfil$\crcr
+  \noalign{\kern1\p@\nointerlineskip}$\hfil#1\widetilde{\hphantom{#2}}\hfil$\crcr}}}
+\providecommand\utilde[1]{\mathpalette\im@utilde{#1}}
+\providecommand\xtwoheadrightarrow[2][]{\ext@arrow 0579{\arrowfill@\relbar\relbar\twoheadrightarrow}{#1}{#2}}
+\providecommand\xtwoheadleftarrow[2][]{\ext@arrow 5097{\arrowfill@\twoheadleftarrow\relbar\relbar}{#1}{#2}}
+\providecommand\xlongequal[2][]{\ext@arrow 0055{\arrowfill@\Relbar\Relbar\Relbar}{#1}{#2}}
+\def\im@tofroml{\vcenter{\offinterlineskip\hbox{$\m@th\relbar\mkern-2mu\relbar$}\kern.3ex\hbox{$\m@th\leftarrow$}}}
+\def\im@tofromm{\vcenter{\offinterlineskip\hbox{$\m@th\relbar$}\kern.3ex\hbox{$\m@th\relbar$}}}
+\def\im@tofromr{\vcenter{\offinterlineskip\hbox{$\m@th\mkern2mu\rightarrow$}\kern.3ex
+  \hbox{$\m@th\relbar\mkern-2mu\relbar$}}}
+\providecommand\xtofrom[2][]{\ext@arrow 0359{\arrowfill@\im@tofroml\im@tofromm\im@tofromr}{#1}{#2}}
+% \Braket{a|b|c}: each top-level | becomes a \middle bar.
+\providecommand\Braket[1]{\left\langle\im@bk#1|\im@nil\right\rangle}
+\def\im@bk#1|#2\im@nil{#1\if\relax\detokenize{#2}\relax\else\,\middle\vert\,\im@bk#2\im@nil\fi}
+% \widecheck from the mathabx font, set as text (a symbol font would spend a
+% math family, and the 16 are needed by the alphabets of a single formula):
+% the widest of its five sizes that fits, raised as TeX raises an accent.
+\providecommand\widecheck[1]{\mathord{\mathchoice{\im@wc\displaystyle{10}{#1}}{\im@wc\textstyle{10}{#1}}%
+  {\im@wc\scriptstyle{7}{#1}}{\im@wc\scriptscriptstyle{5}{#1}}}}
+\newcommand\im@wc[3]{\setbox0\hbox{$\m@th#1#3$}%
+  \setbox2\hbox{\fontsize{#2}{#2}\usefont{U}{mathx}{m}{n}\ifdim\wd0<.8em\char`q\else\ifdim\wd0<1.25em
+    \char'174\else\ifdim\wd0<1.7em\char'175\else\ifdim\wd0<2.15em\char'176\else\char'177\fi\fi\fi\fi}%
+  \setbox4\hbox{\fontsize{#2}{#2}\usefont{U}{mathx}{m}{n}\vrule height\fontdimen5\font width\z@}%
+  \dimen@\ht0\advance\dimen@-\ht4\ifdim\dimen@<\z@\dimen@\z@\fi
+  \hbox{\hbox to\wd0{\hss\raise\dimen@\box2\hss}\kern-\wd0\box0}}
+% \oiint from the esint font, without esint (which redraws every integral).
+\newcommand\im@esg[2]{\vcenter{\hbox{\fontsize{#2}{#2}\usefont{U}{esint}{m}{n}\char#1}}}
+\newcommand\im@esint[3]{\mathop{\mathchoice{\im@esg{#1}{10}#3}{\im@esg{#2}{10}#3}{\im@esg{#2}{7}#3}%
+  {\im@esg{#2}{5}#3}}\nolimits}
+\providecommand\oiint{\im@esint{'016}{'015}{}}
+\providecommand\oiiint{\im@esint{'016}{'015}{\mkern-12mu\int}}
+% MathJax's upgreek, from the Euler font as text (no math family spent).
+\newcommand\im@ugr[1]{\mathord{\text{\usefont{U}{eur}{m}{n}\char#1}}}
+\providecommand\upalpha{\im@ugr{"0B}}\providecommand\upbeta{\im@ugr{"0C}}\providecommand\upgamma{\im@ugr{"0D}}
+\providecommand\updelta{\im@ugr{"0E}}\providecommand\upepsilon{\im@ugr{"0F}}\providecommand\upzeta{\im@ugr{"10}}
+\providecommand\upeta{\im@ugr{"11}}\providecommand\uptheta{\im@ugr{"12}}\providecommand\upiota{\im@ugr{"13}}
+\providecommand\upkappa{\im@ugr{"14}}\providecommand\uplambda{\im@ugr{"15}}\providecommand\upmu{\im@ugr{"16}}
+\providecommand\upnu{\im@ugr{"17}}\providecommand\upxi{\im@ugr{"18}}\providecommand\uppi{\im@ugr{"19}}
+\providecommand\uprho{\im@ugr{"1A}}\providecommand\upsigma{\im@ugr{"1B}}\providecommand\uptau{\im@ugr{"1C}}
+\providecommand\upupsilon{\im@ugr{"1D}}\providecommand\upphi{\im@ugr{"1E}}\providecommand\upchi{\im@ugr{"1F}}
+\providecommand\uppsi{\im@ugr{"20}}\providecommand\upomega{\im@ugr{"21}}\providecommand\upvarepsilon{\im@ugr{"22}}
+\providecommand\upvartheta{\im@ugr{"23}}\providecommand\upvarpi{\im@ugr{"24}}\providecommand\upvarphi{\im@ugr{"27}}
+\providecommand\Upgamma{\im@ugr{"00}}\providecommand\Updelta{\im@ugr{"01}}\providecommand\Uptheta{\im@ugr{"02}}
+\providecommand\Uplambda{\im@ugr{"03}}\providecommand\Upxi{\im@ugr{"04}}\providecommand\Uppi{\im@ugr{"05}}
+\providecommand\Upsigma{\im@ugr{"06}}\providecommand\Upupsilon{\im@ugr{"07}}\providecommand\Upphi{\im@ugr{"08}}
+\providecommand\Uppsi{\im@ugr{"09}}\providecommand\Upomega{\im@ugr{"0A}}
+% MathJax's physics: the common commands, without the package (which
+% would redefine \div, \Re and \Im).
+% \qty(..), \qty[..], \qty|..| and \qty{..} grow with their content. siunitx
+% has a \qty of its own (\qty{1}{\metre}, a quantity): a {..} followed by a
+% second group is that one. A user's physics package keeps its own \qty.
+\@ifpackageloaded{physics}{}{%
+  \ifdefined\qty\NewCommandCopy\im@siqty\qty\fi
+  \DeclareRobustCommand\qty{\@ifnextchar(\im@qtyp{\@ifnextchar[\im@qtyb{\@ifnextchar|\im@qtyv\im@qtyc}}}}
+\def\im@qtyp(#1){\left(#1\right)}\def\im@qtyb[#1]{\left[#1\right]}
+\def\im@qtyv|#1|{\left\lvert#1\right\rvert}
+\def\im@qtyc#1{\@ifnextchar\bgroup{\im@qtysi{#1}}{\left\{#1\right\}}}
+\def\im@qtysi#1#2{\ifdefined\im@siqty\im@siqty{#1}{#2}\else\left\{#1\right\}{#2}\fi}
+\providecommand\pqty[1]{\left(#1\right)}\providecommand\bqty[1]{\left[#1\right]}
+\providecommand\Bqty[1]{\left\{#1\right\}}\providecommand\vqty[1]{\left\lvert#1\right\rvert}
+\providecommand\eval[1]{\left.#1\right\rvert}\providecommand\order[1]{\mathcal{O}\left(#1\right)}
+\providecommand\comm[2]{\left[#1,#2\right]}\providecommand\acomm[2]{\left\{#1,#2\right\}}
+\providecommand\pb[2]{\left\{#1,#2\right\}}
+\providecommand\expval[1]{\@ifnextchar\bgroup{\im@expval{#1}}{\left\langle#1\right\rangle}}
+\newcommand\im@expval[2]{\left\langle#2\middle\vert#1\middle\vert#2\right\rangle}
+\providecommand\ev{\expval}
+\providecommand\mel[3]{\left\langle#1\middle\vert#2\middle\vert#3\right\rangle}
+\providecommand\matrixel{\mel}
+\providecommand\ketbra[2]{\left\lvert#1\middle\rangle\!\middle\langle#2\right\rvert}
+\providecommand\outerproduct{\ketbra}\providecommand\innerproduct{\braket}
+\providecommand\op{\ketbra}\providecommand\ip{\braket}\providecommand\dyad[1]{\ketbra{#1}{#1}}
+\providecommand\vu[1]{\hat{\mathbf{#1}}}\providecommand\va[1]{\vec{\mathbf{#1}}}
+\providecommand\curl{\nabla\times}\providecommand\divergence{\nabla\cdot}
+\providecommand\laplacian{\nabla^2}\providecommand\trace{\operatorname{tr}}
+\providecommand\fdv[2]{\frac{\delta#1}{\delta#2}}
+\providecommand\Res{\operatorname{Res}}\providecommand\pv{\operatorname{P.V.}}\providecommand\PV{\pv}
+\providecommand\erfc{\operatorname{erfc}}\providecommand\sinc{\operatorname{sinc}}
+\providecommand\mqty{\@ifnextchar(\im@mqtyp{\@ifnextchar[\im@mqtyb{\im@mqtyc}}}
+\def\im@mqtyp(#1){\begin{pmatrix}#1\end{pmatrix}}\def\im@mqtyb[#1]{\begin{bmatrix}#1\end{bmatrix}}
+\def\im@mqtyc#1{\begin{matrix}#1\end{matrix}}
+\providecommand\pmqty[1]{\begin{pmatrix}#1\end{pmatrix}}\providecommand\bmqty[1]{\begin{bmatrix}#1\end{bmatrix}}
+\providecommand\vmqty[1]{\begin{vmatrix}#1\end{vmatrix}}\providecommand\Bmqty[1]{\begin{Bmatrix}#1\end{Bmatrix}}
+\providecommand\smqty[1]{\begin{smallmatrix}#1\end{smallmatrix}}
+% gensymb, and other MathJax commands.
+\providecommand\perthousand{\text{\textperthousand}}
+\providecommand\iddots{\mathinner{\mkern1mu\raise1\p@\hbox{.}\mkern2mu\raise4\p@\hbox{.}\mkern2mu
+  \raise7\p@\vbox{\kern7\p@\hbox{.}}\mkern1mu}}
+\providecommand\Rule[3]{\rule[-#3]{#1}{#2}}
+\providecommand\Space[3]{\hbox to#1{\vrule width\z@ height#2 depth#3\hss}}
+% mhchem's \pu (KaTeX and MathJax have it, the LaTeX package does not): number, then unit.
+\providecommand\pu[1]{\im@pu#1 \im@nil}
+\def\im@pu#1 #2\im@nil{\if\relax\detokenize{#2}\relax\mathrm{#1}\else\SI{#1}{#2}\fi}
+% KaTeX's display-style array.
+\newenvironment{darray}{\everymath{\displaystyle}\array}{\endarray}
+% ulem's \sout underlines in math; KaTeX strikes through: a rule on the math axis.
+\@ifpackageloaded{ulem}{\let\im@textsout\sout
+  \protected\def\sout#1{\ifmmode\mathpalette\im@sout{#1}\else\im@textsout{#1}\fi}}{}
+\newcommand\im@sout[2]{\setbox\z@\hbox{$\m@th#1#2$}\rlap{\vrule\@width\wd\z@
+  \@height\dimexpr\fontdimen22\textfont2+.2\p@\relax\@depth-\dimexpr\fontdimen22\textfont2-.2\p@\relax}\box\z@}
+\makeatother
