@@ -1,4 +1,4 @@
-import type { Elements, Register, RenderElement } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement, UiOpenResult } from 'claude-code'
 
 import { layoutParagraph, mathRefs, parseMessage, stringWidth, toUnicode } from './layout'
 import type { Block, Line, MathRef, PictureState, Run } from './layout'
@@ -57,6 +57,10 @@ const DIAGRAM_FALLBACK = 'suggestion'
 
 // The state family a drawn reply reads, so a landed batch redraws it alone.
 const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
+// The /typeset status pane's id.
+const STATUS_PANE = 'typeset-status'
+// What the status pane reads while drawing, so a landed health check redraws it.
+const STATUS = { plugin: 'typeset', key: 'status' } as const
 
 // Memo bounds: trees by drawn site, parses by text. Above the replies of a
 // long session, as one redraw of the whole transcript must find them all
@@ -107,6 +111,12 @@ let bulletGlyph = BULLET_OTHER
 let maxProseWidth: number | undefined
 let lastColumns: number | undefined // the viewport width replies were last drawn at
 let warned = false
+// A person at a terminal: answers go to a pane or a toast, not to the
+// transcript (where a plugin command's text also reaches the model).
+let isTerminal = false
+let health: Health | undefined // the last health check's answer, for the status pane
+let healthCount = 0
+let statusCheck: Promise<unknown> | undefined
 
 const isEnabled = () => enabled ?? settings.enabled
 
@@ -607,23 +617,29 @@ function texLine(health: Health): string {
   return `TeX fallback: ${tex.works === false ? 'on, but its test failed' : 'on'} (found ${found.join(', ')}${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''})`
 }
 
-function statusText(health: Health): string {
+/** The status report, one line each, grouped as the pane shows it: state and renderer, TeX, cell and colour, fonts, setup, cache, diagrams, errors. */
+function statusLines(health: Health | undefined): string[] {
   const now = stats()
-  const cell = health.cell ? `${health.cell.width}x${health.cell.height} px` : 'unknown'
   const source = enabled === undefined ? 'from settings' : `by /${COMMAND} ${enabled ? 'on' : 'off'}`
-  const lines = [
-    `${isEnabled() ? 'on' : 'off'} (${source})`,
-    `renderer: ${health.ok ? 'ready' : 'NOT READY'}${health.version ? ` (${health.version}, ${health.engine ?? 'unknown engine'})` : ''}`,
-    ...health.problems.map(problem => `  problem: ${problem}`),
-    `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
-    `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
-    `CJK font: ${health.cjkFont ?? 'none found'}${settings.cjkFont ? ` (setting: ${settings.cjkFont})` : ''}`,
-    texLine(health),
+  const lines = [`${isEnabled() ? 'on' : 'off'} (${source})`]
+  if (health === undefined) {
+    lines.push('renderer: checking...')
+  } else {
+    const cell = health.cell ? `${health.cell.width}x${health.cell.height} px` : 'unknown'
+    lines.push(
+      `renderer: ${health.ok ? 'ready' : 'NOT READY'}${health.version ? ` (${health.version}, ${health.engine ?? 'unknown engine'})` : ''}`,
+      ...health.problems.map(problem => `  problem: ${problem}`),
+      texLine(health),
+      `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
+      `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
+      `CJK font: ${health.cjkFont ?? 'none found'}${settings.cjkFont ? ` (setting: ${settings.cjkFont})` : ''}`,
+    )
+  }
+  lines.push(
     `packages: ${settings.packages.length > 0 ? settings.packages.join(', ') : 'none extra'}; macros: ${definitionCount(settings.macros)} definitions`,
     `cache: ${now.pictures} pictures, ${now.failed} failed, ${now.pending} pending, ${now.batches} render calls`,
-    `diagrams: ${settings.diagramColor ? `colour (${theme() ?? 'theme not known yet'})` : 'monochrome'}`,
-    `prompt hint: ${settings.promptHint ? 'on' : 'off'}`,
-  ]
+    `diagrams: ${settings.diagramColor ? `colour (${theme() ?? 'theme not known yet'})` : 'monochrome'}; prompt hint: ${settings.promptHint ? 'on' : 'off'}`,
+  )
   if (now.errors.length > 0) {
     lines.push('recent errors:')
     for (const { latex, error } of now.errors.slice(-5)) {
@@ -631,7 +647,53 @@ function statusText(health: Health): string {
     }
   }
 
-  return lines.join('\n')
+  return lines
+}
+
+/** Runs a health check and keeps its answer for the status pane, which it redraws. */
+async function checkHealth($: EngineInterface): Promise<Health> {
+  const found = await check($)
+  health = found
+  healthCount += 1
+  await $.state.set(STATUS, healthCount).catch(() => {})
+
+  return found
+}
+
+/**
+ * Opens the status pane at once, with the last health check's answer, and
+ * checks again; the pane is drawn anew when that check lands. False when no
+ * pane can be shown here (the call failed, or no surface places it), and the
+ * caller prints the report instead.
+ */
+async function openStatus($: EngineInterface, columns: number): Promise<boolean> {
+  if (!isTerminal) return false
+  // Body rows the report wants: the title, a blank row, its lines as they
+  // wrap a little inside the terminal's width (the frame), a blank row, the hint.
+  const room = Math.max(20, columns - 4)
+  const rows = statusLines(health).reduce((sum, line) => sum + Math.max(1, Math.ceil(stringWidth(line) / room)), 0) + 4
+  let opened: UiOpenResult
+  try {
+    opened = await $.ui.open({ id: STATUS_PANE, title: `/${COMMAND} status`, focus: true, closeOnEscape: true, holdToasts: true, rows })
+  } catch {
+    return false
+  }
+  if (!opened.isPlaced) {
+    // An unplaced pane stays open and would show up later, unasked.
+    void $.ui.close({ id: STATUS_PANE }).catch(() => {})
+
+    return false
+  }
+  // One check at a time: a pane opened again meanwhile waits for the same one.
+  if (statusCheck === undefined) {
+    statusCheck = checkHealth($)
+      .catch(() => undefined)
+      .finally(() => {
+        statusCheck = undefined
+      })
+  }
+
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -641,8 +703,10 @@ export const register: Register = (on, options) => {
   settings = readSettings(options)
   configure(settings, options)
   warned = false
+  health = undefined
 
   on('session.start', async ($, e, next) => {
+    isTerminal = e.isInteractive && e.surface === 'terminal'
     onProblem(reason => {
       if (warned) return
       warned = true
@@ -653,7 +717,7 @@ export const register: Register = (on, options) => {
     // The worker first: nothing awaited below may keep formulas from drawing.
     // Health at once too, so a broken backend is told once and never run per formula.
     void runWorker($)
-    void check($)
+    void checkHealth($).catch(() => {})
     startPolling($)
     await $.command
       .register({
@@ -688,14 +752,23 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // Nothing a subcommand answers reaches the model on a terminal: status opens
+  // a pane, on, off and clear a toast. Without a terminal (`claude -p`) they
+  // print, as the demo always does (its output is a reply to draw).
   on('command.run', { command: COMMAND }, async ($, e) => {
     const verb = e.args.trim().toLowerCase()
+    const tell = (text: string) => {
+      if (!isTerminal) return { text }
+      $.ui.toast(text) // drawn under the plugin's name
+
+      return {}
+    }
     if (verb === 'on' || verb === 'off') {
       enabled = verb === 'on'
       await $.store.set(STORE_ENABLED, enabled).catch(() => {})
       $.ui.invalidate('ui.render')
 
-      return { text: enabled ? 'on: formulas in replies are drawn as pictures.' : 'off: replies are drawn as the engine draws them.' }
+      return tell(enabled ? 'on: formulas in replies are drawn as pictures.' : 'off: replies are drawn as the engine draws them.')
     }
     if (verb === 'demo') return { text: DEMO }
     if (verb === 'clear') {
@@ -704,9 +777,13 @@ export const register: Register = (on, options) => {
       plans.clear()
       $.ui.invalidate('ui.render')
 
-      return { text: 'forgot the drawn formulas; each is drawn again when it shows.' }
+      return tell('forgot the drawn formulas; each is drawn again when it shows.')
     }
-    if (verb === '' || verb === 'status') return { text: statusText(await check($)) }
+    if (verb === '' || verb === 'status') {
+      if (await openStatus($, e.presentation.columns)) return {}
+
+      return { text: statusLines(await checkHealth($)).join('\n') }
+    }
 
     return { text: `Unknown argument "${verb}".\n${USAGE}` }
   }).catch(($, e) => ({ text: `/${COMMAND} ${e.args} failed.` }))
@@ -796,6 +873,27 @@ export const register: Register = (on, options) => {
 
     return await stream.result
   })
+
+  // The status pane, laid out as /btw's answer: the command in bold, the
+  // report, then a dim key hint.
+  on('ui.render', { component: 'Pane', requestId: STATUS_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    await $.state.get(STATUS).catch(() => undefined)
+
+    return (
+      <Box flexDirection="column">
+        <Text bold color="warning">
+          /{COMMAND} status
+        </Text>
+        <Box flexDirection="column" marginTop={1} marginBottom={1}>
+          {statusLines(health).map(line => (
+            <Text>{line}</Text>
+          ))}
+        </Box>
+        <Text dimColor>Esc close</Text>
+      </Box>
+    )
+  }).catch(($, e, next) => next(e))
 
   // The demo's output row is drawn by the same code as a reply.
   on('ui.render', { component: 'CommandOutput', props: { command: COMMAND } }, async ($, e, next) => {

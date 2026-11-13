@@ -141,6 +141,12 @@ const reply = (text: string) => ({
 
 const START = { cwd: '/', surface: 'terminal' as const, isInteractive: true }
 const RUN = { origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 80 } }
+const STATUS_PANE = {
+  plugin: 'typeset',
+  component: 'Pane' as const,
+  requestId: 'typeset-status',
+  props: { title: '/typeset status', isFocused: true, bodyColumns: 76, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+}
 
 const commands = (world: World, command: string) => world.argv.filter(argv => argv[0] === command)
 
@@ -311,6 +317,8 @@ describe('finding typeset-render', () => {
     expect(world.toasts[0]).toContain('sha256')
   })
 
+  // No ui.open answers here, so the pane fails to open and status prints
+  // its report, after the health check it waits for.
   test('/typeset status during a download waits for it rather than starting another', async ($, on) => {
     const clock = mock.clock(on)
     let online = false
@@ -340,5 +348,55 @@ describe('finding typeset-render', () => {
     await clock.advance(0)
     expect(world.downloads).toBe(2)
     expect(world.files.get(CACHED)).toBe('good')
+  })
+
+  test('the status pane opens at once during a download, and is drawn again when it lands', async ($, on) => {
+    const clock = mock.clock(on)
+    let online = false
+    let open = () => {}
+    const opened = new Promise<void>(resolve => {
+      open = resolve
+    })
+    const world = host(on, {
+      checksums: sums(GOOD),
+      download: () => (online ? 'good' : undefined),
+      gate: () => (online ? opened : Promise.resolve()),
+    })
+    on('ui.open', () => ({ value: { isPlaced: true as const } }))
+    // The pane reads `status` while drawing; a write to it is what draws the pane again.
+    const reads: string[] = []
+    let writes = 0
+    on('state.get', (_, e, next) => {
+      reads.push(e.key)
+
+      return next(e)
+    })
+    on('state.set', (_, e, next) => {
+      if (e.key === 'status') writes += 1
+
+      return next(e)
+    })
+    await $.session.start(START)
+    await clock.advance(0)
+    expect(world.downloads).toBe(1)
+
+    online = true
+    await clock.advance(65_000)
+    expect(world.downloads).toBe(2)
+    // The command answers while the download still runs.
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(text).toBeUndefined()
+    const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
+    const lines = async () => (await pane.findAll({ type: 'Text' })).map(found => found.text).join('\n')
+    expect(await lines()).toContain('renderer: NOT READY')
+    expect(await lines()).toContain('could not download')
+    expect(reads).toContain('status')
+    const before = writes
+    open()
+    await clock.advance(0)
+    expect(writes).toBe(before + 1)
+    expect(await lines()).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
+    expect(world.downloads).toBe(2)
+    await pane.unmount()
   })
 })
