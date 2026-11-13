@@ -221,8 +221,9 @@ mermaid-text crate (0.58.0), an outline under a boxed root
   drawn without the shape; quotes, markdown-string backticks and `<br>`
   go. `::icon(...)`, `:::class` lines, `%%` comments and front matter are
   skipped. A second root is refused ("mindmap has more than one root").
-- Flowcharts (`flowchart`, `graph`, any direction): parsed by the crate,
-  drawn as a tree when there is one root, one parent at most per node, no
+- Flowcharts (`flowchart`, `graph`, any direction): parsed by the crate
+  (long arrows such as `--->`, `----` and `-..->` first made the short
+  ones it reads, outside labels), drawn as a tree when there is one root, one parent at most per node, no
   edge label, no edge both ways, no subgraph, no cycle, and some node with
   two children or more. The answer for any other flowchart starts with
   "not a tree", and the hooks draw it as boxes.
