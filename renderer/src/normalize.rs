@@ -149,21 +149,22 @@ fn unwrap_once(latex: &str) -> String {
         }
         _ => {
             if (inner == "aligned" || inner == "alignedat")
-                && let Some(parts) = interjections(&body) {
-                    // \intertext: blocks one under the other.
-                    let blocks: Vec<String> = parts
-                        .iter()
-                        .enumerate()
-                        .map(|(k, part)| {
-                            if k % 2 == 0 {
-                                format!(r"\begin{{{inner}}}{part}\end{{{inner}}}")
-                            } else {
-                                format!(r"\text{{{part}}}")
-                            }
-                        })
-                        .collect();
-                    return format!(r"\begin{{array}}{{l}}{}\end{{array}}{tail}", blocks.join(r"\\"));
-                }
+                && let Some(parts) = interjections(&body)
+            {
+                // \intertext: blocks one under the other.
+                let blocks: Vec<String> = parts
+                    .iter()
+                    .enumerate()
+                    .map(|(k, part)| {
+                        if k % 2 == 0 {
+                            format!(r"\begin{{{inner}}}{part}\end{{{inner}}}")
+                        } else {
+                            format!(r"\text{{{part}}}")
+                        }
+                    })
+                    .collect();
+                return format!(r"\begin{{array}}{{l}}{}\end{{array}}{tail}", blocks.join(r"\\"));
+            }
             if inner == "alignedat" {
                 let Some(count) = ALIGNAT_COUNT.captures(&body) else {
                     return latex.to_string();

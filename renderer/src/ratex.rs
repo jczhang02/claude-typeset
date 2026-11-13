@@ -22,6 +22,7 @@ pub fn em_px(pt_px: f64) -> f64 {
 
 static DEFINITION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:re)?newcommand(\*?)(\s*\{?\s*)\\([A-Za-z]+|.)").unwrap());
+static POSITION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" at position \d+").unwrap());
 static OPERATOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\DeclareMathOperator(\*?)\s*\{?\s*(\\[A-Za-z]+)\s*\}?\s*\{((?:[^{}]|\{[^{}]*\})*)\}").unwrap()
 });
@@ -105,7 +106,15 @@ pub fn typeset(latex: &str, display: bool, fg: [f32; 3], pt_px: f64, macros: &st
         a: 1.0,
     };
     let options = LayoutOptions::default().with_style(style).with_color(colour);
-    let ast = parse(&source).map_err(|e| e.to_string())?;
+    // A position would count the definitions before the formula: dropped.
+    let ast = parse(&source).map_err(|e| {
+        let text = e.to_string();
+        if macros.is_empty() {
+            text
+        } else {
+            POSITION.replace(&text, "").into_owned()
+        }
+    })?;
     let laid = layout(&ast, &options);
     validate_layout(&laid)?;
     let list = to_display_list(&laid);
@@ -148,11 +157,45 @@ fn decode(png: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     buf.truncate(info.buffer_size());
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buf.as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::Rgb => buf
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => return Err("renderer picture failed: indexed PNG".into()),
     };
 
     Ok((rgba, info.width, info.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::typeset;
+
+    /// The last row with ink at least half opaque, in a flat-bottomed
+    /// glyph that sits on the baseline, is the row just above `base_row`:
+    /// the baseline `fit` computes is where RaTeX drew it.
+    #[test]
+    fn the_baseline_is_where_the_glyphs_sit() {
+        for pt_px in [2.0, 3.4, 4.1] {
+            for latex in ["H", "E", r"\mathrm{T}", "HEL"] {
+                let ink = typeset(latex, false, [0.0, 0.0, 0.0], pt_px, "").unwrap();
+                let base_row = ink.height as i64 - ink.depth;
+                let w = ink.width as usize;
+                let last_solid = (0..ink.height as usize)
+                    .rev()
+                    .find(|&y| (0..w).any(|x| ink.rgba[(y * w + x) * 4 + 3] >= 128))
+                    .unwrap() as i64;
+                assert_eq!(last_solid, base_row - 1, "{latex} at {pt_px} px/pt");
+            }
+        }
+    }
 }
