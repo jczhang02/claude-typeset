@@ -13,9 +13,11 @@
 //! Anything else is answered "not a tree", and the hooks draw it themselves.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::LazyLock;
 
 use mermaid_text::types::{EdgeEndpoint, Graph};
 use mermaid_text::{Mindmap, MindmapNode};
+use regex::Regex;
 use unicode_width::UnicodeWidthStr;
 
 pub const MAX_ROWS: usize = 80;
@@ -133,7 +135,8 @@ fn mindmap(body: &str) -> Result<Mindmap, String> {
 /// children in the order their edges were written, labels as written,
 /// shapes dropped.
 fn tree(body: &str) -> Result<Mindmap, String> {
-    let graph = mermaid_text::parser::flowchart::parse(body).map_err(|error| {
+    let body: Vec<String> = body.lines().map(canonical_arrows).collect();
+    let graph = mermaid_text::parser::flowchart::parse(&body.join("\n")).map_err(|error| {
         format!(
             "not a tree: the flowchart could not be parsed ({})",
             short(&error.to_string())
@@ -159,6 +162,58 @@ fn tree(body: &str) -> Result<Mindmap, String> {
     Ok(Mindmap {
         root: build(root, &graph, &children),
     })
+}
+
+/// An arrow operator, long forms included, at the start of the text.
+static ARROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^<?(?:-{2,}>|-{3,}|={2,}>|={3,}|-\.+->|-\.+-)").unwrap());
+
+/// A line with its long arrows ("--->", "----", "-..->", "===>") made the
+/// short ones the crate reads: it takes "--->" as "-->" and the rest of the
+/// dashes as the next node's label ("> B"), or misses a "|label|" after it.
+/// Text in quotes, shapes and |labels| is left alone.
+fn canonical_arrows(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let (mut quote, mut pipe, mut depth) = (false, false, 0usize);
+    let mut at = 0;
+    while let Some(c) = line[at..].chars().next() {
+        let top = !quote && !pipe && depth == 0;
+        if top
+            && matches!(c, '-' | '=' | '<')
+            && let Some(found) = ARROW.find(&line[at..])
+        {
+            let arrow = found.as_str();
+            let (head, op) = arrow.strip_prefix('<').map_or(("", arrow), |op| ("<", op));
+            let short = if op.ends_with('>') {
+                if op.starts_with('=') {
+                    "==>"
+                } else if op.contains('.') {
+                    "-.->"
+                } else {
+                    "-->"
+                }
+            } else if op.starts_with('=') {
+                "==="
+            } else if op.contains('.') {
+                "-.-"
+            } else {
+                "---"
+            };
+            out.push_str(head);
+            out.push_str(short);
+            at += arrow.len();
+            continue;
+        }
+        match c {
+            '"' => quote = !quote,
+            '(' | '[' | '{' if !quote && !pipe => depth += 1,
+            ')' | ']' | '}' if !quote && !pipe => depth = depth.saturating_sub(1),
+            '|' if !quote && depth == 0 => pipe = !pipe,
+            _ => {}
+        }
+        out.push(c);
+        at += c.len_utf8();
+    }
+    out
 }
 
 /// The root of a flowchart that is a tree, or why it is not one.
@@ -343,6 +398,25 @@ mod tests {
         for (source, why) in cases {
             assert_eq!(refusal(source), why, "{source}");
         }
+    }
+
+    #[test]
+    fn long_arrows_are_read_as_arrows() {
+        // The crate alone takes "--->" as "-->" and draws the spare '>' into
+        // the next label, and misses the label after it.
+        let short = drawn("graph TD\n A --> B\n A --> C\n A --> D\n A --- E");
+        for source in [
+            "graph TD\n A ---> B\n A ==> C\n A -.-> D\n A ---- E",
+            "graph TD\n A--->B\n A====>C\n A-..->D\n A----E",
+        ] {
+            assert_eq!(drawn(source), short, "{source}");
+        }
+        assert_eq!(
+            refusal("graph TD\n A --->|yes| B\n A --> C"),
+            "not a tree: an edge has a label"
+        );
+        // Inside a label an arrow is text.
+        assert_eq!(drawn("graph TD\n A --> B[\"x ---> y\"]\n A --> C")[4], "  ├── x ---> y");
     }
 
     #[test]
