@@ -849,6 +849,20 @@ describe('mermaid trees', () => {
     await ui.unmount()
   })
 
+  test('a refusal that names a node "timed out" is kept, not asked for again', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on, HEALTHY, refusing('not a tree: Request timed out has two parents'))
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    for (let i = 0; i < 3; i++) {
+      const ui = await $.ui.mount({ ...reply(TREE_FLOW), surface: 'terminal' })
+      await clock.advance(100)
+      expect(await text(ui)).toContain('┌')
+      await ui.unmount()
+    }
+    expect(backend.batches).toHaveLength(1)
+  })
+
   test('a mindmap the renderer refuses shows its source and why', async ($, on) => {
     const clock = mock.clock(on)
     host(on, HEALTHY, refusing('mindmap has more than one root'))
