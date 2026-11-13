@@ -69,6 +69,19 @@ impl Outcome {
     }
 }
 
+/// In words, for an error a user reads.
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Exited(code) => write!(f, "exited {code}"),
+            Outcome::Signalled => f.write_str("stopped at its memory, file size or CPU limit"),
+            Outcome::TimedOut => f.write_str("timed out"),
+            Outcome::TooMuchOutput => f.write_str("wrote too much"),
+            Outcome::NotStarted => f.write_str("could not start"),
+        }
+    }
+}
+
 /// The environment of every run: paranoid file access, no shell escape,
 /// and no font building (a missing glyph must fail at once).
 fn tex_env(command: &mut Command) {
