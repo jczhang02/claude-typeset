@@ -2,6 +2,13 @@ import type { EngineInterface, PluginOptions } from 'claude-code'
 
 import type { MathRef, Picture, PictureState } from './layout'
 
+// A mermaid block's source for the renderer to draw as a tree (mermaid-text).
+export type DiagramRef = { latex: string; display: true; kind: 'diagram' }
+// The tree drawn: one string per terminal row, its widest row in cells.
+export type Drawing = { lines: string[]; columns: number }
+export type DiagramState = Drawing | { error: string; isBackend?: boolean } | 'pending'
+type Ref = MathRef | DiagramRef
+
 // The one place that runs the renderer (typeset-render, the Rust program in
 // renderer/, one run per batch). A draw asks `lookup` for each formula and gets
 // what is ready now; what is missing is queued, with the drawn site (the
@@ -19,7 +26,11 @@ import type { MathRef, Picture, PictureState } from './layout'
 //
 // A ```tikz block goes the same way, as a ref of kind 'tikz': asked for at
 // the width it is drawn in (a TeX run takes far longer than a formula), and
-// sent in a call of its own, so formulas never wait for it.
+// sent in a call of its own, so formulas never wait for it. A mermaid tree
+// (a mindmap, or a flowchart that may be a tree) is a ref of kind
+// 'diagram': asked for as a formula is (whole first, then at the width it
+// is drawn in when wider), answered as lines of text, and kept apart from
+// the colour and cell size, which do not change it.
 //
 // The engine allows `$` only as `$.noun.event(...)` at a call site and as an
 // argument to a function like these, never kept in a variable, so the worker
@@ -68,9 +79,10 @@ export type Stats = {
 }
 
 type Failure = { error: string; isBackend?: boolean }
-type Result = Picture | Failure
+type Result = Picture | Drawing | Failure
+type State = Result | 'pending'
 // eager: a draw waits for it (sent after COALESCE_MS), else a prefetch.
-type Job = { key: string; ref: MathRef; maxColumns: number; eager: boolean }
+type Job = { key: string; ref: Ref; maxColumns: number; eager: boolean }
 type Answer = { cell?: { width: number; height: number }; fg?: string; results?: unknown[] }
 // What one backend call came to: its answer, a failure (`transient`: worth
 // asking again; `down`: the renderer cannot run at all), or 'split' when the answer
@@ -95,7 +107,8 @@ export const DEFAULTS: Settings = {
 
 const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
 
-const MAX_COLUMNS = 255 // widest Image the terminal draws
+const MAX_COLUMNS = 255 // widest Image the terminal draws (and the widest tree asked for)
+const MAX_DIAGRAM_ROWS = 80
 const COALESCE_MS = 30 // requests closer than this share one backend call
 const PREFETCH_MS = 400 // prefetches gather this long (a draw's request or flush() ends the wait)
 const BATCH_ITEMS = 16 // keeps one call well inside its time limit
@@ -238,6 +251,21 @@ function isPicture(value: unknown): value is Picture {
   )
 }
 
+function isDrawing(value: unknown): value is Drawing {
+  const d = value as Drawing
+  return (
+    typeof d === 'object' &&
+    d !== null &&
+    Array.isArray(d.lines) &&
+    d.lines.length >= 1 &&
+    d.lines.length <= MAX_DIAGRAM_ROWS &&
+    d.lines.every(line => typeof line === 'string' && line.length <= 4 * MAX_COLUMNS) &&
+    Number.isInteger(d.columns) &&
+    d.columns >= 1 &&
+    d.columns <= MAX_COLUMNS
+  )
+}
+
 /** An item error the backend gives for a passing reason, not for the formula. */
 function isTransient(error: string): boolean {
   return /time ?out|timed out|deadline|^renderer|memory or output limit/i.test(error)
@@ -280,12 +308,17 @@ export function noteDiagram() {
   isDrawn = true
 }
 
-function keyOf(ref: MathRef, maxColumns: number): string {
+function keyOf(ref: Ref, maxColumns: number): string {
+  if (ref.kind === 'diagram') return `diagram|${maxColumns}|${ref.latex}`
+
   return `${optionsKey()}|${maxColumns}|${ref.kind === 'tikz' ? 'T' : ref.display ? 'D' : 'I'}|${ref.latex}`
 }
 
 function sizeOf(result: Result): number {
-  return 'png' in result ? result.png.length : 64
+  if ('png' in result) return result.png.length
+  if ('lines' in result) return result.lines.reduce((sum, line) => sum + 2 * line.length, 64)
+
+  return 64
 }
 
 function forget(key: string) {
@@ -324,7 +357,7 @@ function reportDown(reason: string) {
 }
 
 /** Queues `ref`, or false when it was drawn and evicted too often to ask again. */
-function enqueue(ref: MathRef, maxColumns: number, eager = true): boolean {
+function enqueue(ref: Ref, maxColumns: number, eager = true): boolean {
   const key = keyOf(ref, maxColumns)
   if (inFlight.has(key)) return true
   const queued = queue.get(key)
@@ -361,7 +394,7 @@ function waitFor(key: string, site: string | undefined) {
 }
 
 /** Queues `key` (noting `site` as waiting for it): 'pending', or EVICTED when it may not be asked for again. */
-function ask(ref: MathRef, maxColumns: number, site: string | undefined): PictureState {
+function ask(ref: Ref, maxColumns: number, site: string | undefined): State {
   if (!enqueue(ref, maxColumns)) return EVICTED
   waitFor(keyOf(ref, maxColumns), site)
 
@@ -369,13 +402,16 @@ function ask(ref: MathRef, maxColumns: number, site: string | undefined): Pictur
 }
 
 /**
- * What is ready for `ref` at `width` columns: a picture, an error, or
- * 'pending' (then queued for the worker, with `site` noted as waiting for
- * it). A picture wider than `width` is asked for again at that width, so a
- * long formula shrinks to fit. The same state comes back as the same object
- * until it changes.
+ * What is ready for `ref` at `width` columns: a picture (a drawing for a
+ * diagram), an error, or 'pending' (then queued for the worker, with `site`
+ * noted as waiting for it). A picture wider than `width` is asked for again
+ * at that width, so a long formula shrinks to fit (a tree cuts its long
+ * labels). The same state comes back as the same object until it changes.
  */
-export function lookup(ref: MathRef, width: number, site?: string): PictureState {
+export function lookup(ref: DiagramRef, width: number, site?: string): DiagramState
+export function lookup(ref: MathRef, width: number, site?: string): PictureState
+export function lookup(ref: Ref, width: number, site?: string): PictureState | DiagramState
+export function lookup(ref: Ref, width: number, site?: string): State {
   isDrawn = true
   if (backendDown !== undefined) {
     if (downFailure.error !== backendDown) downFailure = { error: backendDown, isBackend: true }
@@ -402,7 +438,7 @@ export function lookup(ref: MathRef, width: number, site?: string): PictureState
  * while the reply streams), so its picture is ready when the reply is drawn.
  * Nothing waits for it, so its landing redraws nothing.
  */
-export function prefetch(ref: MathRef, width: number) {
+export function prefetch(ref: Ref, width: number) {
   if (backendDown !== undefined) return
   if (ref.kind === 'tikz') {
     if (!cache.has(keyOf(ref, columnsFor(width)))) enqueue(ref, columnsFor(width), false)
@@ -489,7 +525,7 @@ function setupOptions(): { packages: string[]; macros: string; cjkFont: string; 
 /** One backend call for `batch`. */
 async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
   const request = {
-    items: batch.map(job => (job.ref.kind === 'tikz' ? { latex: job.ref.latex, display: true, kind: 'tikz' } : { latex: job.ref.latex, display: job.ref.display })),
+    items: batch.map(job => (job.ref.kind === undefined ? { latex: job.ref.latex, display: job.ref.display } : { latex: job.ref.latex, display: true, kind: job.ref.kind })),
     options: {
       // The resolved values when known, so each call draws for the key it is
       // filed under and the backend skips its own lookup.
@@ -556,9 +592,13 @@ async function runBatch($: EngineInterface, batch: Job[]): Promise<void> {
   adopt(answer)
   batch.forEach((job, i) => {
     const raw = answer.results?.[i]
-    const result: Result = isPicture(raw)
-      ? { png: raw.png, columns: raw.columns, rows: raw.rows, textRow: raw.textRow }
-      : { error: typeof (raw as Failure)?.error === 'string' ? (raw as Failure).error : 'no picture' }
+    const isDiagram = job.ref.kind === 'diagram'
+    const result: Result =
+      !isDiagram && isPicture(raw)
+        ? { png: raw.png, columns: raw.columns, rows: raw.rows, textRow: raw.textRow }
+        : isDiagram && isDrawing(raw)
+          ? { lines: [...raw.lines], columns: raw.columns }
+          : { error: typeof (raw as Failure)?.error === 'string' ? (raw as Failure).error : isDiagram ? 'no drawing' : 'no picture' }
     settle(job, result, keyOf(job.ref, job.maxColumns), 'error' in result && isTransient(result.error))
   })
 }

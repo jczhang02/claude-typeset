@@ -15,6 +15,12 @@
 // a failure that holds at other widths too (a parse error, too big, too
 // wide for this width and every narrower one) is memoised by source, so a
 // resize does not draw a diagram that cannot fit again.
+//
+// Trees go elsewhere: `treeRoute` picks the blocks the renderer draws as an
+// outline tree (mermaid-text, in typeset-render), a `mindmap` or a
+// flowchart that looks like a tree, and `treeRows` colours what it drew.
+// The renderer has the last word on what is a tree; this check only spares
+// it the flowcharts that plainly are not.
 
 import { stringWidth } from './layout'
 import { layoutReport, renderMermaidASCII, type AsciiLayoutReport } from './vendor/mermaid-ascii.js'
@@ -308,9 +314,14 @@ function prepareFlowchart(lines: string[]): string[] {
   return out
 }
 
+// Inline markup and entities gone; a markdown string label ("`**bold** text`")
+// keeps its text, not its backticks.
+function unmark(lines: string[], kind: Kind): string[] {
+  return lines.map(line => decodeEntities(stripMarkup(line, kind).replace(/"`([^`"]*)`"/g, '"$1"')))
+}
+
 function prepare(lines: string[], kind: Kind): string {
-  // A markdown string label ("`**bold** text`") keeps its text, not its backticks.
-  const marked = lines.map(line => decodeEntities(stripMarkup(line, kind).replace(/"`([^`"]*)`"/g, '"$1"')))
+  const marked = unmark(lines, kind)
   if (kind === 'flowchart') {
     return prepareFlowchart(marked).join('\n')
   }
@@ -580,10 +591,7 @@ function countNodes(prepared: string): { all: number; inSubgraphs: number } {
     let bare = statement.replace(/"[^"]*"/g, '').replace(/\|[^|]*\|/g, '').replace(/:::[\w-]+/g, '')
     // Edge text ("A -- yes --> B") and shapes with their labels go first.
     bare = bare.replace(/ (?:--|==|-\.) .*? (<?-->|<?==>|<?-\.->|---|===|-\.-)(?= |$)/g, ' $1')
-    for (let before = ''; before !== bare; ) {
-      before = bare
-      bare = bare.replace(/\[[^[\]]*\]|\([^()]*\)|\{[^{}]*\}|(?<=\w)>[^\]]*\]/g, '')
-    }
+    bare = withoutShapes(bare)
     for (const id of bare.match(/(?<![\w-])[A-Za-z_][\w]*(?:-[\w]+)*/g) ?? []) {
       all.add(id)
       if (depth > 0) {
@@ -593,6 +601,19 @@ function countNodes(prepared: string): { all: number; inSubgraphs: number } {
   }
 
   return { all: all.size, inSubgraphs: nested.size }
+}
+
+// A node's shape with its label: [..] (..) {..} >..], innermost first.
+const SHAPES = /\[[^[\]]*\]|\([^()]*\)|\{[^{}]*\}|(?<=\w)>[^\]]*\]/g
+
+function withoutShapes(text: string): string {
+  let bare = text
+  for (let before = ''; before !== bare; ) {
+    before = bare
+    bare = bare.replace(SHAPES, '')
+  }
+
+  return bare
 }
 
 const HEADS = /[▲▼◄►◥◤◢◣]/g
@@ -829,4 +850,152 @@ function draw(source: string, maxColumns: number): Drawn {
   const reason = sizeReason(layouts, maxColumns)
 
   return narrowest < Infinity ? { result: { ok: false, reason }, below, layouts } : fail(reason, true)
+}
+
+// ---------------------------------------------------------------------------
+// Trees, drawn by the renderer
+
+export type TreeRoute = { kind: 'mindmap' | 'tree'; source: string }
+
+const routes = new Map<string, TreeRoute | null>()
+
+/**
+ * Whether the renderer draws a block as a tree: a `mindmap` always, a
+ * flowchart when it looks like a tree that branches. `source` is what the
+ * renderer gets: comments, inline markup and entities gone, as
+ * beautiful-mermaid gets them. Undefined: the block stays here.
+ */
+export function treeRoute(source: string): TreeRoute | undefined {
+  const known = routes.get(source)
+  if (known !== undefined) {
+    remember(routes, source, known)
+
+    return known ?? undefined
+  }
+  const found = findRoute(source)
+  remember(routes, source, found ?? null)
+
+  return found
+}
+
+function findRoute(source: string): TreeRoute | undefined {
+  if (source.length > MAX_SOURCE) {
+    return undefined
+  }
+  const lines = body(clean(source))
+  if (lines.length === 0 || lines.length > MAX_SOURCE_LINES) {
+    return undefined
+  }
+  const word = (lines[0] as string).trim().split(/[\s;]/)[0] ?? ''
+  if (/^mindmap$/i.test(word)) {
+    return { kind: 'mindmap', source: unmark(lines, 'flowchart').join('\n') }
+  }
+  if (kindOf(word) !== 'flowchart') {
+    return undefined
+  }
+  const marked = unmark(lines, 'flowchart')
+
+  return looksLikeTree(prepareFlowchart(marked)) ? { kind: 'tree', source: marked.join('\n') } : undefined
+}
+
+/**
+ * Does a prepared flowchart look like a tree: no subgraph and no edge
+ * label, one parent at most per node, one root that reaches every node,
+ * and some node with two children or more (the renderer's own rule; a
+ * plain chain stays a row of boxes)? A statement it cannot read is passed
+ * over: the renderer decides.
+ */
+function looksLikeTree(prepared: string[]): boolean {
+  const parent = new Map<string, string>()
+  const children = new Map<string, string[]>()
+  const nodes = new Set<string>()
+  for (const statement of prepared.slice(1)) {
+    if (/^subgraph\b/.test(statement)) {
+      return false
+    }
+    if (FLOW_KEYWORD.test(statement)) {
+      continue
+    }
+    const bare = withoutShapes(statement.replace(/"[^"]*"/g, '').replace(/:::[\w-]+/g, ''))
+    // "A -->|yes| B" or "A -- yes --> B"
+    if (bare.includes('|') || /(?:^| )(?:--|==|-\.)(?= |$)/.test(bare)) {
+      return false
+    }
+    const parts = bare.split(/ (<?(?:-->|---|==>|===|-\.->|-\.-)) /)
+    const ids: string[][] = []
+    for (const [i, part] of parts.entries()) {
+      if (i % 2 === 1) {
+        if (part.startsWith('<')) {
+          return false
+        }
+        continue
+      }
+      ids.push(part.split('&').flatMap(name => /^[\w-]+/.exec(name.trim())?.[0] ?? []))
+    }
+    for (const [i, group] of ids.entries()) {
+      for (const id of group) {
+        nodes.add(id)
+        for (const child of ids[i + 1] ?? []) {
+          if (parent.has(child)) {
+            return false
+          }
+          parent.set(child, id)
+          children.set(id, [...(children.get(id) ?? []), child])
+        }
+      }
+    }
+  }
+  const roots = [...nodes].filter(id => !parent.has(id))
+  if (roots.length !== 1) {
+    return false
+  }
+  const reached = new Set<string>()
+  const stack = [roots[0] as string]
+  while (stack.length > 0) {
+    const id = stack.pop() as string
+    if (!reached.has(id)) {
+      reached.add(id)
+      stack.push(...(children.get(id) ?? []))
+    }
+  }
+
+  return reached.size === nodes.size && [...children.values()].some(kids => kids.length >= 2)
+}
+
+/**
+ * A tree the renderer drew, as rows of coloured segments: the root's box
+ * as 'border', the lines that join the nodes as 'edge', node text as
+ * 'label'. The text after a branch ("├── ", "└── ") is all label, so a
+ * label holding a line character keeps the label colour.
+ */
+export function treeRows(lines: string[]): DiagramResult {
+  const safe = lines.map(line => line.replace(UNSAFE, '').replace(/\s+$/, ''))
+  const isBoxed = safe[0]?.trimStart().startsWith('╭') ?? false
+  const rows = safe.map((line, i): DiagramSegment[] => {
+    if (isBoxed && i < 3) {
+      const inside = /^(\s*│ )(.*)( │)$/.exec(line)
+      if (i === 1 && inside) {
+        return [
+          { text: inside[1] as string, role: 'border' },
+          { text: inside[2] as string, role: 'label' },
+          { text: inside[3] as string, role: 'border' },
+        ]
+      }
+
+      return lead(line, 'border')
+    }
+    const at = line.indexOf('── ')
+    if (at < 0) {
+      return lead(line, 'edge')
+    }
+
+    return [...lead(line.slice(0, at + 3), 'edge'), { text: line.slice(at + 3), role: 'label' as const }].filter(segment => segment.text !== '')
+  })
+
+  return { ok: true, rows, columns: Math.max(0, ...safe.map(line => stringWidth(line))) }
+}
+
+// Line characters in `role`, the spaces between them as 'text'.
+function lead(text: string, role: DiagramRole): DiagramSegment[] {
+  return segments(Array.from(text, char => ({ text: char, width: 1, role: char === ' ' ? 'text' : role })))
 }

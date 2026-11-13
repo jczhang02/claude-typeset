@@ -2,14 +2,15 @@ import type { Elements, Register, RenderElement } from 'claude-code'
 
 import { layoutParagraph, mathRefs, parseMessage, stringWidth, toUnicode } from './layout'
 import type { Block, Line, MathRef, PictureState, Run } from './layout'
-import { renderMermaid } from './mermaid'
-import type { DiagramRole, DiagramSegment } from './mermaid'
+import { renderMermaid, treeRoute, treeRows } from './mermaid'
+import type { DiagramResult, DiagramRole, DiagramSegment } from './mermaid'
 import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme } from './render-client'
-import type { Health, Settings } from './render-client'
+import type { DiagramRef, DiagramState, Health, Settings } from './render-client'
 
 // typeset: draws the LaTeX in Claude's replies as typeset pictures, inline
 // with the terminal text and on its baseline, ```mermaid blocks as Unicode
-// diagrams, and ```tikz blocks as pictures (TeX Live drawing them). Blocks without either go to the surface's own Markdown
+// diagrams (mindmaps and tree-shaped flowcharts as outline trees the renderer
+// draws), and ```tikz blocks as pictures (TeX Live drawing them). Blocks without either go to the surface's own Markdown
 // element; paragraphs with formulas are wrapped here, line by line
 // (layout.ts), since a picture is a box of whole cells that no Text flows
 // around. Pictures come from the renderer (typeset-render, the Rust program
@@ -75,7 +76,7 @@ const SCAN_TRIGGER = /\$|\\[)\]]|```|~~~/
 const PROMPT_HINT = [
   '# Math and diagrams in replies',
   'This terminal typesets LaTeX: write $...$ inline (no space just inside the $) and $$...$$ on lines of their own for display.',
-  'It also draws ```mermaid blocks (flowchart, sequence, state, class, ER) as diagrams, and a ```tikz block (one tikzpicture) as a picture.',
+  'It also draws ```mermaid blocks (flowchart, sequence, state, class, ER; use mindmap for hierarchies and mind maps) as diagrams, and a ```tikz block (one tikzpicture) as a picture.',
   'Never put math in code spans or code blocks.',
 ].join('\n')
 
@@ -281,36 +282,59 @@ function drawSegment(t: Table, segment: DiagramSegment): RenderElement {
   return <Text {...segmentColor(segment.role)}>{segment.text}</Text>
 }
 
+/** A diagram as rows of coloured text, or why it cannot be drawn in `room` columns. */
+function artOrReason(t: Table, result: DiagramResult, room: number): RenderElement | string {
+  const { Box, Text } = t
+  if (!result.ok) return result.reason
+  if (result.rows.length > DIAGRAM_ROWS) return `${result.rows.length} rows, more than ${DIAGRAM_ROWS}`
+  if (result.columns > room) return `${result.columns} columns wide, ${room} available`
+
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {result.rows.map(row => (
+        <Box flexShrink={0} height={1}>
+          <Text wrap="truncate">{row.map(segment => drawSegment(t, segment))}</Text>
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+/** The ref a mermaid block that the renderer draws as a tree is asked for by. */
+function treeRef(source: string): DiagramRef {
+  return { latex: source, display: true, kind: 'diagram' }
+}
+
 /**
  * A mermaid block: the diagram as rows of coloured text; or, where it cannot
  * be drawn (another kind, a parse failure, too big), its source as the
  * engine draws a code block and one dim line saying why.
+ *
+ * A mindmap, and a flowchart that looks like a tree, are drawn by the
+ * renderer as an outline tree. While that is on its way a mindmap shows its
+ * source and a flowchart its beautiful-mermaid drawing (else its source);
+ * a flowchart the renderer refuses ("not a tree") or fails on is drawn by
+ * beautiful-mermaid, a mindmap shows its source and why.
  */
-function drawDiagram(t: Table, block: Extract<Block, { kind: 'mermaid' }>, width: number): RenderElement {
-  const { Box, Text } = t
+function drawDiagram(t: Table, block: Extract<Block, { kind: 'mermaid' }>, width: number, diagram: (ref: DiagramRef, width: number) => DiagramState): RenderElement {
+  const { Box, Markdown } = t
   const indent = Math.min(block.indent, width - 1)
   const room = Math.max(1, width - indent)
   noteDiagram()
-  const result = renderMermaid(block.source, room)
-  const reason = !result.ok
-    ? result.reason
-    : result.rows.length > DIAGRAM_ROWS
-      ? `${result.rows.length} rows, more than ${DIAGRAM_ROWS}`
-      : result.columns > room
-        ? `${result.columns} columns wide, ${room} available`
-        : undefined
-  const body =
-    result.ok && reason === undefined ? (
-      <Box flexDirection="column" flexShrink={0}>
-        {result.rows.map(row => (
-          <Box flexShrink={0} height={1}>
-            <Text wrap="truncate">{row.map(segment => drawSegment(t, segment))}</Text>
-          </Box>
-        ))}
-      </Box>
-    ) : (
-      shownAsSource(t, 'mermaid', block.source, `mermaid diagram shown as source: ${(reason ?? 'not drawn').slice(0, 200)}`)
-    )
+  const route = treeRoute(block.source)
+  const state = route ? diagram(treeRef(route.source), room) : undefined
+  const tree = typeof state === 'object' && 'lines' in state ? artOrReason(t, treeRows(state.lines), room) : undefined
+  const source = () => <Markdown text={fenced(block.source, 'mermaid')} />
+  let body: RenderElement
+  if (typeof tree === 'object') {
+    body = tree
+  } else if (route?.kind === 'mindmap') {
+    const why = tree ?? (typeof state === 'object' && 'error' in state ? state.error : undefined)
+    body = why === undefined ? source() : shownAsSource(t, 'mermaid', block.source, `mermaid mindmap shown as source: ${why.slice(0, 200)}`)
+  } else {
+    const art = artOrReason(t, renderMermaid(block.source, room), room)
+    body = typeof art === 'object' ? art : state === 'pending' ? source() : shownAsSource(t, 'mermaid', block.source, `mermaid diagram shown as source: ${art.slice(0, 200)}`)
+  }
 
   return indent > 0 ? (
     <Box marginLeft={indent} width={room} flexShrink={0}>
@@ -359,7 +383,13 @@ function drawTikz(t: Table, block: Extract<Block, { kind: 'tikz' }>, state: Pict
 // One blank row where the source had a blank line between two blocks, as the
 // engine's markdown draws it; none where it had none ("Steps:\n1. ...", the
 // items of a tight list).
-function drawBlocks(t: Table, blocks: Block[], picture: (ref: MathRef, width: number) => PictureState, width: number): RenderElement[] {
+function drawBlocks(
+  t: Table,
+  blocks: Block[],
+  picture: (ref: MathRef, width: number) => PictureState,
+  diagram: (ref: DiagramRef, width: number) => DiagramState,
+  width: number,
+): RenderElement[] {
   const { Box, Markdown } = t
 
   return blocks.map((block, i) => {
@@ -378,7 +408,7 @@ function drawBlocks(t: Table, blocks: Block[], picture: (ref: MathRef, width: nu
     } else if (block.kind === 'display') {
       body = drawDisplay(t, block, picture({ latex: block.latex, display: true }, displayRoom(block, width)), width)
     } else if (block.kind === 'mermaid') {
-      body = drawDiagram(t, block, width)
+      body = drawDiagram(t, block, width, diagram)
     } else if (block.kind === 'tikz') {
       body = drawTikz(t, block, picture({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, width)), width)
     } else {
@@ -470,9 +500,13 @@ function plan(text: string): Plan {
   return made
 }
 
-/** Every picture the blocks will ask for, at the width each is drawn in (as drawBlocks asks). */
-function eachPicture(blocks: Block[], width: number, ask: (ref: MathRef, width: number) => void) {
+/** Every picture (and tree) the blocks will ask for, at the width each is drawn in (as drawBlocks asks). */
+function eachPicture(blocks: Block[], width: number, ask: (ref: MathRef | DiagramRef, width: number) => void) {
   for (const block of blocks) {
+    if (block.kind === 'mermaid') {
+      const route = treeRoute(block.source)
+      if (route) ask(treeRef(route.source), Math.max(1, width - Math.min(block.indent, width - 1)))
+    }
     if (block.kind === 'display') ask({ latex: block.latex, display: true }, displayRoom(block, width))
     if (block.kind === 'tikz') ask({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, width))
     if (block.kind !== 'paragraph') continue
@@ -483,7 +517,7 @@ function eachPicture(blocks: Block[], width: number, ask: (ref: MathRef, width: 
 
 // What a site was drawn with: its text, frame, and every picture state it
 // was given; equal states now mean an equal tree.
-type Asked = { ref: MathRef; width: number; state: PictureState }
+type Asked = { ref: MathRef | DiagramRef; width: number; state: PictureState | DiagramState }
 type Drawn = { text: string; frameKey: string; asked: Asked[]; tree: RenderElement; isPending: boolean }
 
 const drawn = new Map<string, Drawn>()
@@ -514,10 +548,16 @@ function drawMarkdown(t: Table, site: string, text: string, blocks: Block[], fra
 
     return state
   }
+  const diagram = (ref: DiagramRef, width: number) => {
+    const state = lookup(ref, width, site)
+    asked.push({ ref, width, state })
+
+    return state
+  }
   // Ask for every formula at once, so one batch carries them all. A tikz
   // block is asked for at its own width as it is drawn (it goes alone).
   for (const ref of mathRefs(blocks)) if (ref.kind !== 'tikz') picture(ref, frame.width)
-  const tree = drawFrame(t, frame, drawBlocks(t, blocks, picture, frame.width))
+  const tree = drawFrame(t, frame, drawBlocks(t, blocks, picture, diagram, frame.width))
   const made: Drawn = { text, frameKey: key, asked, tree, isPending: asked.some(({ state }) => state === 'pending') }
   drawn.delete(site)
   drawn.set(site, made)

@@ -3,6 +3,8 @@ import type { On } from 'claude-code'
 
 // A 1x1 transparent PNG: what typeset-render's pictures stand for here.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+// What typeset-render draws of a small tree (mermaid-text's outline).
+const TREE = ['╭──────╮', '│ 主题 │', '╰───┬──╯', '    │', '    ├── 一', '    └── 二']
 
 const HEALTHY = {
   ok: true,
@@ -16,7 +18,7 @@ const HEALTHY = {
   problems: [],
 }
 
-type Item = { latex: string; display: boolean; kind?: 'tikz' }
+type Item = { latex: string; display: boolean; kind?: 'tikz' | 'diagram' }
 type Request = {
   items: Item[]
   options: { fg: string; cell: string; thicken?: number; maxColumns?: number; packages?: string[]; macros?: string; cjkFont?: string; texFallback?: boolean }
@@ -63,7 +65,9 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
         ? { error: '! Undefined control sequence.' }
         : item.kind === 'tikz'
           ? { png: PNG, columns: Math.min(30, request.options.maxColumns ?? 255), rows: 9, textRow: 0, engine: 'tex' }
-          : { png: PNG, columns: item.display ? 12 : 4, rows: item.display ? 2 : 1, textRow: 0 },
+          : item.kind === 'diagram'
+            ? { lines: TREE, columns: 12 }
+            : { png: PNG, columns: item.display ? 12 : 4, rows: item.display ? 2 : 1, textRow: 0 },
     )
 
     return ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results }))
@@ -376,6 +380,7 @@ describe('commands and prompt', () => {
     const hint = composed.sections[1]?.text ?? ''
     expect(hint).toContain('$$...$$')
     expect(hint).toContain('mermaid')
+    expect(hint).toContain('use mindmap for hierarchies')
     expect(hint).toContain('```tikz')
     // Under 100 tokens: at most about 4 characters a token in English prose.
     expect(hint.length).toBeLessThan(400)
@@ -755,6 +760,142 @@ describe('mermaid', () => {
     expect(markdown.map(item => (item.props as { text?: string }).text)).toEqual(['```mermaid\npie title Pets\n  "Dogs" : 386\n```'])
     expect(await ui.find({ type: 'Text', text: /mermaid diagram shown as source/ })).toBeDefined()
     await ui.unmount()
+  })
+})
+
+describe('mermaid trees', () => {
+  const MINDMAP = 'A map:\n\n```mermaid\nmindmap\n  root((主题))\n    一\n    二\n```'
+  const TREE_FLOW = 'A tree:\n\n```mermaid\nflowchart LR\n  R[主题] --> A[一]\n  R --> B[二]\n```'
+  const text = async (ui: { findAll: (query: { type: 'Text' }) => Promise<{ text?: string }[]> }) => (await ui.findAll({ type: 'Text' })).map(item => item.text ?? '').join('\n')
+  // A diagram item answered with an error, everything else as usual.
+  const refusing = (error: string) => (request: Request) =>
+    request.items.some(item => item.kind === 'diagram')
+      ? ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results: request.items.map(item => (item.kind === 'diagram' ? { error } : { png: PNG, columns: 4, rows: 1, textRow: 0 })) }))
+      : undefined
+
+  test('a mindmap shows its source while the renderer draws it, then the tree', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(MINDMAP), surface: 'terminal' })
+    const waiting = await ui.findAll({ type: 'Markdown' })
+    expect(waiting.map(item => (item.props as { text?: string }).text)).toContain('```mermaid\nmindmap\n  root((主题))\n    一\n    二\n```')
+    expect(await ui.find({ type: 'Text', text: /shown as source/ })).toBeUndefined()
+    await clock.advance(100)
+    expect(backend.batches).toEqual([[{ latex: 'mindmap\n  root((主题))\n    一\n    二', display: true, kind: 'diagram' }]])
+    expect(backend.requests[0]?.options.maxColumns).toBe(255)
+    const art = await text(ui)
+    expect(art).toContain('├──')
+    expect(art).toContain('二')
+    expect((await ui.findAll({ type: 'Markdown' })).map(item => (item.props as { text?: string }).text)).toEqual(['A map:'])
+    // The root's box in the border colour, the branches in the edge colour,
+    // the labels in the text colour.
+    expect(JSON.stringify(await ui.find({ type: 'Text', text: '╭──────╮' }))).toContain('#1e66f5')
+    expect(JSON.stringify(await ui.find({ type: 'Text', text: '├──' }))).toContain('#7287fd')
+    expect(JSON.stringify(await ui.find({ type: 'Text', text: '    ├── 一' }))).toContain('{"type":"Text","children":["一"]}')
+    // Drawn: a redraw asks for nothing more.
+    await clock.advance(1000)
+    expect(backend.batches).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('a tree flowchart is drawn by the renderer, by beautiful-mermaid until then', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(TREE_FLOW), surface: 'terminal' })
+    expect(await text(ui)).toContain('┌')
+    await clock.advance(100)
+    expect(backend.batches.flat()).toEqual([{ latex: 'flowchart LR\n  R[主题] --> A[一]\n  R --> B[二]', display: true, kind: 'diagram' }])
+    const art = await text(ui)
+    expect(art).toContain('╭──────╮')
+    expect(art).not.toContain('┌')
+    await ui.unmount()
+  })
+
+  test('a tree wider than the reply is asked for again at its width', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on, HEALTHY, request =>
+      request.items.some(item => item.kind === 'diagram')
+        ? ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results: [{ lines: TREE, columns: Math.min(120, request.options.maxColumns ?? 255) }] }))
+        : undefined,
+    )
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(MINDMAP), surface: 'terminal' })
+    await clock.advance(200)
+    expect(backend.requests.map(request => request.options.maxColumns)).toEqual([255, 78])
+    expect(await text(ui)).toContain('├──')
+    await ui.unmount()
+  })
+
+  test('a flowchart the renderer says is not a tree is drawn by beautiful-mermaid, and not asked for again', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on, HEALTHY, refusing('not a tree: it has a cycle'))
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(TREE_FLOW), surface: 'terminal' })
+    await clock.advance(100)
+    const art = await text(ui)
+    expect(art).toContain('┌')
+    expect(art).not.toContain('shown as source')
+    await clock.advance(1000)
+    expect(backend.batches).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('a mindmap the renderer refuses shows its source and why', async ($, on) => {
+    const clock = mock.clock(on)
+    host(on, HEALTHY, refusing('mindmap has more than one root'))
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(MINDMAP), surface: 'terminal' })
+    await clock.advance(100)
+    const reason = await ui.find({ type: 'Text', text: /mindmap shown as source/ })
+    expect(reason?.text).toBe('mermaid mindmap shown as source: mindmap has more than one root')
+    expect((await ui.findAll({ type: 'Markdown' })).map(item => (item.props as { text?: string }).text)).toContain('```mermaid\nmindmap\n  root((主题))\n    一\n    二\n```')
+    await ui.unmount()
+  })
+
+  test('a mindmap streamed in a reply is drawn by the time the reply is', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    const chunks = [
+      { kind: 'text' as const, index: 0, text: 'A map:\n\n```mermaid\nmindmap\n  root((主题))\n' },
+      { kind: 'text' as const, index: 0, text: '    一\n    二\n```' },
+    ]
+    on('turn.step', async function* () {
+      for (const chunk of chunks) yield chunk
+
+      return { turnId: 'turn-1', index: 0, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+    })
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    for await (const _ of $.turn.step(STEP)) {
+      // passed on
+    }
+    await clock.advance(0)
+    expect(backend.batches.flat()).toEqual([{ latex: 'mindmap\n  root((主题))\n    一\n    二', display: true, kind: 'diagram' }])
+    const ui = await $.ui.mount({ ...reply(MINDMAP), surface: 'terminal' })
+    expect(await text(ui)).toContain('├──')
+    await clock.advance(200)
+    expect(backend.batches).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('without the renderer a tree flowchart is drawn by beautiful-mermaid, a mindmap shown as source', async ($, on) => {
+    const clock = mock.clock(on)
+    host(on, { ok: false, problems: ['typeset-render not found'] })
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(100)
+    const flow = await $.ui.mount({ ...reply(TREE_FLOW), surface: 'terminal' })
+    expect(await text(flow)).toContain('┌')
+    await flow.unmount()
+    const map = await $.ui.mount({ ...reply(MINDMAP, true, 'msg-2'), surface: 'terminal' })
+    expect(await map.find({ type: 'Text', text: /mermaid mindmap shown as source: typeset-render not found/ })).toBeDefined()
+    await map.unmount()
   })
 })
 
