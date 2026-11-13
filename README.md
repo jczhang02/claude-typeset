@@ -72,6 +72,8 @@ set -g focus-events on
 /typeset clear           # Forget the drawn pictures and typeset them again
 ```
 
+`/typeset status` (or `/typeset` alone) opens a pane above the prompt (beside the transcript in fullscreen from 110 columns); Esc closes it. It shows the last health check at once and is drawn again when a fresh one lands. `on`, `off` and `clear` answer with a toast. None of them writes to the transcript, so Claude never reads their output. Without a terminal (`claude -p "/typeset status"`) they print their answer as text instead. `/typeset demo` always prints: its output is a sample reply, drawn as one.
+
 <details>
 <summary><strong>Run from a clone (for development)</strong></summary>
 
