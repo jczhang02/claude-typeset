@@ -208,6 +208,33 @@ and looked up only for a batch with CJK text (fontconfig takes about
 10 ms). One font draws all CJK text, so Japanese kanji and Traditional
 Chinese use the glyph forms of the chosen face.
 
+## Mermaid trees
+
+Mermaid blocks are drawn in the hooks by beautiful-mermaid, except trees:
+a `mindmap`, and a flowchart that is a tree, go to the renderer as items
+of kind `diagram` and come back as lines of text drawn by the
+mermaid-text crate (0.58.0), an outline under a boxed root
+(`renderer/src/diagram.rs`).
+
+- `mindmap`: nodes by indentation, the first one the root. The text inside
+  a shape (`((text))`, `[text]`, `{{text}}`, `))text((` and the rest) is
+  drawn without the shape; quotes, markdown-string backticks and `<br>`
+  go. `::icon(...)`, `:::class` lines, `%%` comments and front matter are
+  skipped. A second root is refused ("mindmap has more than one root").
+- Flowcharts (`flowchart`, `graph`, any direction): parsed by the crate,
+  drawn as a tree when there is one root, one parent at most per node, no
+  edge label, no edge both ways, no subgraph, no cycle, and some node with
+  two children or more. The answer for any other flowchart starts with
+  "not a tree", and the hooks draw it as boxes.
+- The drawing keeps to the reply's width (at most 255 columns) by cutting
+  long labels with `…`, and to 80 rows; otherwise it is refused with its
+  size.
+
+`renderer/tests/fixtures/mermaid/` holds two trees Claude wrote (about 40
+nodes, Chinese labels), each as a flowchart and as a mindmap; the tests
+check that both forms draw the same lines (60 x 38 and 67 x 39 cells) and
+that every label appears as written.
+
 ## What does not draw
 
 A formula the engine refuses (and TeX, when installed) shows as its
