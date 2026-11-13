@@ -706,7 +706,7 @@ impl<'a> Tex<'a> {
         ];
         let outcome = sandbox::run(&argv, &dir.path, TOOL_TIMEOUT, Some("dvipng.out"));
         if !outcome.ok() {
-            return Err(Failure::Passing(format!("dvipng failed ({outcome:?})")));
+            return Err(Failure::Passing(format!("dvipng {outcome}")));
         }
         static DEPTH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[1[^\[\]]*?depth=(-?\d+)").unwrap());
         let out = sandbox::read_text(&dir.file("dvipng.out"), 1 << 20).unwrap_or_default();
@@ -748,7 +748,7 @@ impl<'a> Tex<'a> {
             None,
         );
         if !dvips.ok() {
-            return Err(Failure::Passing(format!("dvips failed ({dvips:?})")));
+            return Err(Failure::Passing(format!("dvips {dvips}")));
         }
         let resolution = format!("-r{dpi}");
         let gs = sandbox::run(
@@ -771,7 +771,7 @@ impl<'a> Tex<'a> {
             None,
         );
         if !gs.ok() {
-            return Err(Failure::Passing(format!("Ghostscript failed ({gs:?})")));
+            return Err(Failure::Passing(format!("Ghostscript {gs}")));
         }
         std::fs::read(dir.file("p1.png")).map_err(|_| Failure::Passing("Ghostscript drew nothing".into()))
     }
