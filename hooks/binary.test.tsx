@@ -292,6 +292,25 @@ describe('finding typeset-render', () => {
     await ui.unmount()
   })
 
+  test('a download refused for its sum is not fetched again at every health check', async ($, on) => {
+    const clock = mock.clock(on)
+    const world = host(on, { checksums: sums(GOOD), download: () => 'tampered' })
+    await $.session.start(START)
+    await clock.advance(0)
+    expect(world.downloads).toBe(1)
+    // Four health checks in the first five minutes, none of them downloads.
+    await clock.advance(290_000)
+    expect(world.downloads).toBe(1)
+    await clock.advance(80_000)
+    expect(world.downloads).toBe(2)
+    // Then twice as long.
+    await clock.advance(480_000)
+    expect(world.downloads).toBe(2)
+    expect(world.ran).toEqual([])
+    expect(world.toasts).toHaveLength(1)
+    expect(world.toasts[0]).toContain('sha256')
+  })
+
   test('/typeset status during a download waits for it rather than starting another', async ($, on) => {
     const clock = mock.clock(on)
     let online = false
