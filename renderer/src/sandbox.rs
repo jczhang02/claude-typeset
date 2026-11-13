@@ -153,18 +153,20 @@ pub fn run(argv: &[&str], dir: &Path, timeout: Duration, stdout: Option<&str>) -
     let start = Instant::now();
     let mut measured = start;
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                // Anything it left running goes with it.
+        match has_ended(group) {
+            Some(true) => {
+                // Anything it left running goes with it. The child is not
+                // reaped yet, so its number, the group's, cannot have gone
+                // to another process.
                 // SAFETY: as above.
                 unsafe { libc::kill(-group, libc::SIGKILL) };
-                return match status.code() {
-                    Some(code) => Outcome::Exited(code),
-                    None => Outcome::Signalled,
+                return match child.wait().map(|status| status.code()) {
+                    Ok(Some(code)) => Outcome::Exited(code),
+                    _ => Outcome::Signalled,
                 };
             }
-            Ok(None) => {}
-            Err(_) => {
+            Some(false) => {}
+            None => {
                 kill(&mut child);
                 return Outcome::Signalled;
             }
@@ -182,6 +184,24 @@ pub fn run(argv: &[&str], dir: &Path, timeout: Duration, stdout: Option<&str>) -
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// Whether the child `pid` has ended, leaving it to be reaped (None when
+/// that cannot be asked).
+fn has_ended(pid: libc::pid_t) -> Option<bool> {
+    // SAFETY: an all-zero siginfo_t is valid; waitid fills it in, and with
+    // WNOWAIT leaves the child waitable.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let status = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    // With WNOHANG, si_signo stays 0 while the child runs.
+    (status == 0).then_some(info.si_signo != 0)
 }
 
 /// The start of a file the run wrote (at most `max` bytes), as text.
