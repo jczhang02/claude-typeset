@@ -4,7 +4,7 @@ import { layoutParagraph, mathRefs, parseMessage, stringWidth, toUnicode } from 
 import type { Block, Line, MathRef, PictureState, Run } from './layout'
 import { renderMermaid } from './mermaid'
 import type { DiagramRole, DiagramSegment } from './mermaid'
-import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme, warmUp } from './render-client'
+import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme } from './render-client'
 import type { Health, Settings } from './render-client'
 
 // typeset: draws the LaTeX in Claude's replies as typeset pictures, inline
@@ -12,8 +12,8 @@ import type { Health, Settings } from './render-client'
 // Unicode diagrams. Blocks without either go to the surface's own Markdown
 // element; paragraphs with formulas are wrapped here, line by line
 // (layout.ts), since a picture is a box of whole cells that no Text flows
-// around. Pictures come from the backend (bin/client.py and its daemon)
-// through render-client.ts; a draw never waits for them.
+// around. Pictures come from the renderer (typeset-render, the Rust program
+// in renderer/) through render-client.ts; a draw never waits for them.
 //
 // Cost: every redraw request runs this hook for every reply on screen, so a
 // reply whose pictures are all ready and unchanged returns the tree it drew
@@ -495,42 +495,6 @@ function prerender(text: string) {
 // ---------------------------------------------------------------------------
 // Status
 
-function yesNo(value: boolean | undefined): string {
-  return value ? 'yes' : 'no'
-}
-
-/** A part of --check's answer this mod does not shape (daemon, format), as one line. */
-function described(value: unknown): string {
-  if (value === undefined || value === null) return 'unknown'
-  if (typeof value !== 'object') return String(value).slice(0, 200)
-  const parts = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item === null || ['string', 'number', 'boolean'].includes(typeof item))
-    .map(([name, item]) => `${name} ${typeof item === 'boolean' ? yesNo(item) : String(item).slice(0, 80)}`)
-
-  return parts.length > 0 ? parts.join(', ') : 'unknown'
-}
-
-function daemonText(health: Health): string {
-  if (health.daemon === null) return 'not reached: each batch renders in its own process (slower)'
-  const daemon = health.daemon as { pid?: unknown; uptime?: unknown; served?: unknown } | undefined
-  if (typeof daemon?.pid === 'number') {
-    const uptime = typeof daemon.uptime === 'number' ? `, up ${Math.round(daemon.uptime)} s` : ''
-    const served = typeof daemon.served === 'number' ? `, ${daemon.served} requests served` : ''
-
-    return `running (pid ${daemon.pid}${uptime}${served})`
-  }
-
-  return described(health.daemon)
-}
-
-function formatText(health: Health): string {
-  const format = health.format as { ok?: unknown; path?: unknown } | undefined
-  if (format?.ok === true) return `precompiled${typeof format.path === 'string' ? ` (${format.path})` : ''}`
-  if (format?.ok === false) return 'not built: every TeX run reads the whole preamble (slower)'
-
-  return described(health.format)
-}
-
 /** How many definitions the `macros` option holds. */
 function definitionCount(macros: string): number {
   return (macros.match(/\\(?:(?:re)?newcommand|providecommand|[gex]?def|let|DeclareMathOperator)(?![A-Za-z])/g) ?? []).length
@@ -542,14 +506,13 @@ function statusText(health: Health): string {
   const source = enabled === undefined ? 'from settings' : `by /${COMMAND} ${enabled ? 'on' : 'off'}`
   const lines = [
     `${isEnabled() ? 'on' : 'off'} (${source})`,
-    `backend: ${health.ok ? 'ready' : 'NOT READY'} - latex ${yesNo(health.latex)}, dvipng ${yesNo(health.dvipng)}, Pillow ${yesNo(health.pil)}`,
+    `renderer: ${health.ok ? 'ready' : 'NOT READY'}${health.version ? ` (${health.version}, ${health.engine ?? 'unknown engine'})` : ''}`,
     ...health.problems.map(problem => `  problem: ${problem}`),
     `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
     `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
-    `daemon: ${daemonText(health)}`,
-    `format: ${formatText(health)}`,
+    `CJK font: ${health.cjkFont ?? 'none found'}${settings.cjkFont ? ` (setting: ${settings.cjkFont})` : ''}`,
     `packages: ${settings.packages.length > 0 ? settings.packages.join(', ') : 'none extra'}; macros: ${definitionCount(settings.macros)} definitions`,
-    `cache: ${now.pictures} pictures, ${now.failed} failed, ${now.pending} pending, ${now.batches} render calls${health.cacheDir ? `; on disk: ${health.cacheDir}` : ''}`,
+    `cache: ${now.pictures} pictures, ${now.failed} failed, ${now.pending} pending, ${now.batches} render calls`,
     `diagrams: ${settings.diagramColor ? `colour (${theme() ?? 'theme not known yet'})` : 'monochrome'}`,
     `prompt hint: ${settings.promptHint ? 'on' : 'off'}`,
   ]
@@ -675,7 +638,6 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     const stream = next(e)
     if (e.agentId !== undefined || !isEnabled()) return yield* stream
-    warmUp($)
     const blocks = new Map<number, Watched>()
     let isOver = false
     let streaming: Watched | undefined // the text block the last chunk belonged to

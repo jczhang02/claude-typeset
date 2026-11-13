@@ -1,0 +1,31 @@
+[package]
+name = "typeset-render"
+version = "4.0.0"
+edition = "2024"
+license = "MIT"
+description = "Renders the LaTeX in Claude Code replies to PNG pictures that fill whole terminal cells"
+publish = false
+
+[[bin]]
+name = "typeset-render"
+path = "src/main.rs"
+
+[dependencies]
+ratex-layout = "=0.1.15"
+ratex-parser = "=0.1.15"
+ratex-render = { version = "=0.1.15", features = ["embed-fonts"] }
+ratex-types = "=0.1.15"
+png = "0.17"
+fast_image_resize = "5"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+regex = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

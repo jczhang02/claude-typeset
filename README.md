@@ -4,7 +4,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Claude_Code-2.1.311%2B-d97757?style=flat-square" alt="Claude Code 2.1.311+">
   <img src="https://img.shields.io/badge/tmux-supported-1bb91f?style=flat-square&logo=tmux&logoColor=white" alt="tmux supported">
-  <img src="https://img.shields.io/badge/KaTeX_corpus-98.8%25-8839ef?style=flat-square" alt="KaTeX corpus 98.8%">
+  <img src="https://img.shields.io/badge/KaTeX_corpus-99.5%25-8839ef?style=flat-square" alt="KaTeX corpus 99.5%">
 </div>
 
 <p align="center">
@@ -21,31 +21,19 @@
 - **Math inline with the text**: `$e^{i\pi} + 1 = 0$` becomes a typeset picture on the text baseline, so it reads like a line in a paper, not like source code
 - **Display math**: `$$...$$` and `\[...\]` are centred on their own lines; a formula wider than the reply is drawn smaller to fit
 - **Works in tmux**: pictures go through tmux's passthrough to Ghostty or kitty, and the cell size comes from tmux itself
-- **Fast**: a precompiled LaTeX format and a render daemon bring one new formula to about 28 ms and ten to about 60 ms; redrawing a typeset reply costs under 2 ms
-- **Broad coverage**: real TeX (latex and dvipng), checked against the KaTeX function list (98.8 % drawn), MathJax extensions, `physics`, `mhchem`, `siunitx`, `amscd` and your own packages and macros
+- **Fast**: a native renderer brings one new formula to about 4 ms and ten to about 18 ms; redrawing a typeset reply costs under 2 ms
+- **Broad coverage**: [RaTeX](https://github.com/erweixin/RaTeX), a KaTeX-compatible engine in Rust, checked against the KaTeX function list (99.5 % drawn), with `mhchem`, `amscd` and your own macros; no TeX installation needed
 - **Mermaid diagrams as text art**: flowcharts, sequence, state, class, ER and xychart diagrams drawn in box-drawing characters, coloured by role in Catppuccin
-- **Chinese, Japanese and Korean**: wide characters count as two cells, so text, CJK and formulas wrap together; `\text{面积}` typesets with CJK fonts
-- **Safe by default**: Claude's formulas are typeset in a safe subset of LaTeX; nothing in a reply can read files, run programs, or change how another formula is drawn
+- **Chinese, Japanese and Korean**: wide characters count as two cells, so text, CJK and formulas wrap together; `\text{面积}` typesets with the system's CJK font
+- **Safe by default**: the engine only lays out math; nothing in a reply can read files, run programs, or change how another formula is drawn
 
 ## Quick Start
 
 > Formerly `inline-math`. The command is now `/typeset`, and the options live under `typeset@…` in `pluginConfigs` (move your old `inline-math@…` entry). A stored `/inline-math off` does not carry over: the mod starts on.
 
-You need Claude Code 2.1.311 or later, a terminal with the kitty graphics protocol (Ghostty or kitty), a TeX distribution with `latex` and `dvipng`, and python3 with Pillow. Tested on Linux with Ghostty and tmux 3.8 (passthrough needs tmux 3.3 or later); macOS should work but is untested.
+You need Claude Code 2.1.311 or later and a terminal with the kitty graphics protocol (Ghostty or kitty). Formulas are drawn by `typeset-render`, a Rust program in `renderer/`; until 4.0.0 is released it is built from a clone (see below) with a Rust toolchain. Tested on Linux with Ghostty and tmux 3.8 (passthrough needs tmux 3.3 or later); macOS should work but is untested.
 
-**Install TeX and Pillow**
-
-```bash
-# Arch
-sudo pacman -S texlive-basic texlive-latex texlive-latexrecommended texlive-latexextra \
-  texlive-binextra texlive-fontsrecommended texlive-langcjk texlive-langchinese python-pillow
-# Debian and Ubuntu
-sudo apt install texlive-latex-extra texlive-lang-chinese dvipng python3-pil
-# macOS
-brew install --cask mactex-no-gui && pip3 install --user pillow
-```
-
-The CJK packages are only needed for Chinese, Japanese or Korean text inside a formula.
+Chinese, Japanese or Korean text inside a formula needs a CJK font on the system (Noto CJK or Source Han; on macOS the system's own).
 
 **Install the mod**
 
@@ -71,7 +59,7 @@ set -g focus-events on
 **Run**
 
 ```text
-/typeset status          # What it found: latex, dvipng, Pillow, daemon, format, cell size, colour
+/typeset status          # What it found: renderer, CJK font, cell size, colour
 /typeset demo            # A sample reply: inline, tall, display, Chinese, a list, a macro, a flowchart
 /typeset off             # Draw replies as Claude Code does; kept across sessions
 /typeset on              # Draw formulas and diagrams again
@@ -83,6 +71,7 @@ set -g focus-events on
 
 ```bash
 git clone https://github.com/jczhang02/claude-typeset ~/Documents/dev-tools/claude-typeset
+cargo build --release --manifest-path ~/Documents/dev-tools/claude-typeset/renderer/Cargo.toml
 claude --plugin-dir ~/Documents/dev-tools/claude-typeset    # this session only
 ```
 
@@ -102,25 +91,25 @@ tmux is a first-class target: the mod is developed in Ghostty inside tmux.
 
 - **Pictures** are sent with the kitty graphics protocol. tmux passes them through to the outer terminal only with `allow-passthrough on`; without it, every formula shows as its Unicode stand-in (`x²`, `α + β`, `√π`, `ℝ`) and diagrams still draw, as they are text.
 - **Cell size** decides how large a picture is. Inside tmux the mod asks tmux for the client's cell size (`#{client_cell_width}x#{client_cell_height}`), and looks again every few seconds, so it follows the terminal you attach from. Outside tmux it asks the terminal.
-- **Several panes and sessions** share one render daemon and one picture cache, so a formula typeset in one pane costs no TeX run in the others.
 - **Check it**: `tmux show -g allow-passthrough` must say `on`, and `/typeset status` shows the cell size it found. If it is wrong, set the `cell` option.
 
 ## Features in Detail
 
 ### Math
 
-A formula is kept on one text row when it fits at 80 % of its size or more; a taller one (a fraction, a sum with limits) makes only its own line taller. Bold, italic, strikethrough, inline code and links around formulas keep their styles, and list items keep their markers and hanging indents. Until a picture is ready, and when TeX cannot typeset a formula, its Unicode stand-in takes its place.
+A formula is kept on one text row when it fits at 80 % of its size or more; a taller one (a fraction, a sum with limits) makes only its own line taller. Bold, italic, strikethrough, inline code and links around formulas keep their styles, and list items keep their markers and hanging indents. Until a picture is ready, and when the engine cannot typeset a formula, its Unicode stand-in takes its place. A whole `align`, `gather` or `equation` is drawn as its inner form (`aligned`, `gathered`), without equation numbers; `\tag{x}` draws as a plain (x).
 
 Not math: code spans and code blocks, `\$`, and prices such as `$5 and $10` (the pandoc rule: an opening `$` must be followed by a non-space, a closing `$` must follow a non-space and must not be followed by a digit). Headings, tables and blockquotes are drawn by Claude Code's own Markdown renderer, so a formula inside one shows as its Unicode stand-in.
 
-What TeX can typeset, and what it cannot, is listed in [docs/compatibility.md](docs/compatibility.md): the KaTeX function list, MathJax extensions, commands that only make sense on the web (`\href`, `\htmlClass`, `\style`, ...), which draw as their content, and the best-effort cases (tikz-cd, Traditional Chinese, Korean).
+What the engine draws, and what it cannot, is described in [docs/compatibility.md](docs/compatibility.md). On the corpus in `renderer/tests/corpus/`:
 
-```text
-$ python3 bin/coverage.py
-katex     1185/1200    98.8 % drawn   15 allowed failures, 0 other failures
-mathjax    142/150     94.7 % drawn   8 allowed failures, 0 other failures
-claude     239/239    100.0 % drawn   0 allowed failures, 0 other failures
-```
+| Corpus | Drawn | What fails |
+| --- | --- | --- |
+| KaTeX function list | 1194 / 1200 (99.5 %) | `\includegraphics`, `\reflectbox`, `\mapsfrom` |
+| Formulas as Claude writes them | 233 / 239 (97.5 %) | package commands: `siunitx` (`\SI`, `\si`), `physics` (`\dv`, `\pdv`, `\dd`) |
+| MathJax extensions | 93 / 150 (62.0 %) | plain TeX (`\cases`, `\buildrel`), `\bbox`, `\enclose`, physics, mathtools extras |
+
+`\abs`, `\norm`, `\floor`, `\ceil`, `\Q`, `\C`, `\sgn`, `\diag` and `\mbox` are built in. Define other package commands you use in `macros` (`\newcommand{\dv}[2]{\frac{\mathrm{d}#1}{\mathrm{d}#2}}`).
 
 ### Diagrams
 
@@ -128,7 +117,7 @@ A closed ` ```mermaid ` block, at the top level of a reply or in a list item, is
 
 ```text
 ┌────────┐        ┌─────┐     ┌────────┐  ┌──────────┐
-│ Claude │        │ Mod │     │ Daemon │  │ Terminal │
+│ Claude │        │ Mod │     │ Render │  │ Terminal │
 └────┬───┘        └──┬──┘     └────┬───┘  └─────┬────┘
      │  reply text   │             │            │
      │───────────────▶             │            │
@@ -139,7 +128,7 @@ A closed ` ```mermaid ` block, at the top level of a reply or in a list item, is
      │               │      text + images       │
      │               │──────────────────────────▶
 ┌────┴───┐        ┌──┴──┐     ┌────┴───┐  ┌─────┴────┐
-│ Claude │        │ Mod │     │ Daemon │  │ Terminal │
+│ Claude │        │ Mod │     │ Render │  │ Terminal │
 └────────┘        └─────┘     └────────┘  └──────────┘
 ```
 
@@ -161,7 +150,7 @@ $$\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}$$
 Then $\norm{x} \le 1$ for every $x$.
 ```
 
-The mod expands such definitions as text before TeX sees a formula, and the definition itself draws as nothing. The expanded formula still goes through the safety check.
+The mod expands such definitions as text before the engine sees a formula, and the definition itself draws as nothing.
 
 <details>
 <summary><strong>Rules</strong></summary>
@@ -170,35 +159,31 @@ The mod expands such definitions as text before TeX sees a formula, and the defi
 - The scope is one reply (one text block), headings and tables included (as Unicode there). Definitions do not carry over to the next reply.
 - A name defined twice takes its last definition, wherever in the reply it is; `\providecommand` does not replace an earlier definition.
 - Arguments are pasted as TeX reads them: `\lVert#1` with `x` gives `\lVert x`, not the unknown `\lVertx`. A macro whose body is empty draws as nothing.
-- Arguments `#1` to `#9`, with an optional first argument and its default. `\def` takes undelimited parameters only; a `\def` with delimited parameters, `\edef` and `\xdef` are not expanded, and TeX refuses them.
-- Expansion stops at 32 levels of nesting or 8000 characters; a formula past either limit is drawn as written, which TeX then refuses.
+- Arguments `#1` to `#9`, with an optional first argument and its default. `\def` takes undelimited parameters only; a `\def` with delimited parameters, `\edef` and `\xdef` are not expanded, and the engine refuses them.
+- Expansion stops at 32 levels of nesting or 8000 characters; a formula past either limit is drawn as written, which the engine then refuses.
 
 </details>
 
 ### Streaming
 
-Claude Code draws a reply's text itself while it streams, so formulas show as LaTeX source until their text block is finished; a mod cannot replace that live text. Meanwhile the mod reads the stream (without changing it) and queues each formula for TeX once its closing `$` has arrived. When the block ends, its formulas are usually typeset already and appear at once. A formula closed just before the block ends can show as its Unicode stand-in for one backend round trip (about 30-60 ms).
+Claude Code draws a reply's text itself while it streams, so formulas show as LaTeX source until their text block is finished; a mod cannot replace that live text. Meanwhile the mod reads the stream (without changing it) and queues each formula once its closing `$` has arrived. When the block ends, its formulas are usually typeset already and appear at once. A formula closed just before the block ends can show as its Unicode stand-in for one renderer round trip (a few milliseconds).
 
 ### Speed
 
-Measured with `python3 bin/bench.py`, from process start to exit, as Claude Code runs it:
+Measured from process start to exit, as Claude Code runs `typeset-render` (one run per batch, no daemon):
 
 | Case | 1 new formula | 10 new formulas |
 | --- | --- | --- |
-| Daemon running | 28 ms | 59 ms |
-| Daemon starting | 260 ms | 300 ms |
-| Already cached | | 23 ms |
-| Chemistry (`\ce`), daemon running | 90 ms | 205 ms |
+| Formulas | 4 ms | 18 ms |
+| Chemistry (`\ce`) | 9 ms | |
+| Chinese text (`\text{速度}`) | 15 ms | |
 
 <details>
 <summary><strong>How it stays fast</strong></summary>
 
-- **Precompiled format.** The whole preamble (fonts, `amsmath`, `mathtools`, the symbol packages, your `packages` and `macros`) is dumped once into a LaTeX format in `~/.cache/claude-inline-math/fmt/`. It is built again by itself when TeX Live, the options or the renderer change.
-- **Render daemon.** `bin/client.py` (standard library only, quick to start) hands each request to `bin/renderd.py`, which keeps Pillow loaded, keeps TeX processes waiting with the format read, and keeps `dvipng` running. Its socket is in `$XDG_RUNTIME_DIR/claude-inline-math/` (else `/tmp/claude-inline-math-<uid>/`, else `~/.cache/claude-inline-math/run/`), a folder only you can use. It serves every session you have open, stops after 30 minutes without a request, and replaces itself when the renderer files change. When it cannot be reached, `client.py` renders in its own process: slower, the same pictures.
-- **Batches.** Formulas asked for within 30 ms share one call of up to 16. Formulas found while a reply streams gather for up to 400 ms, also while a call is running, so a long reply costs a few calls. A batch heavy with chemistry is split over the waiting TeX processes.
-- **Warm start.** When a turn starts after a pause of a minute or more, the mod starts the daemon while Claude is still thinking.
-- **Cheap redraws.** Each reply is parsed once, and a reply whose pictures are ready returns its last drawing. When pictures arrive, only the replies that waited for them are drawn again.
-- **Disk cache.** Pictures are kept in `$XDG_CACHE_HOME/claude-inline-math` (else `~/.cache/claude-inline-math`), keyed by the renderer version, so a formula seen before costs no TeX run.
+- **Native engine.** RaTeX parses and lays out a formula in well under a millisecond; the fonts are built into the program. The CJK font is looked up only for a batch with CJK text, and the choice is kept in `~/.cache/typeset/cjk-font`.
+- **Batches.** Formulas asked for within 30 ms share one call of up to 16. Formulas found while a reply streams gather for up to 400 ms, also while a call is running, so a long reply costs a few calls.
+- **Cheap redraws.** Each reply is parsed once, and a reply whose pictures are ready returns its last drawing. When pictures arrive, only the replies that waited for them are drawn again. Pictures stay in memory for the session.
 
 </details>
 
@@ -225,22 +210,14 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 | `foreground` | `auto` | Formula colour. `auto` follows the desktop's light or dark scheme (Catppuccin Latte text `#4c4f69`, Mocha text `#cdd6f4`); or `#rrggbb`. |
 | `cell` | `auto` | One character cell in pixels. `auto` asks tmux, then the terminal; or `WxH`, such as `19x42`. |
 | `baseline` | `0.773` | Where the font's baseline sits in a cell, from the top, as a fraction of the cell height. 0.773 is JetBrains Mono. |
-| `ptPx` | `3.4` | Formula size in pixels per TeX point. 3.4 matches a 12 pt font with 42 px cells. |
+| `ptPx` | `3.4` | Formula size in pixels per TeX point (a formula's body size is 10 pt). 3.4 matches a 12 pt font with 42 px cells. |
 | `minShrink` | `0.8` | How far an inline formula may shrink to stay on one row before it takes more rows. |
-| `thicken` | `1.8` | Makes the antialiased edges of TeX's thin strokes more opaque (alpha $a$ drawn as $1 - (1 - a)^{t}$), so formulas read as firmly as the terminal font. `1` draws them as TeX does. |
+| `thicken` | `1.8` | Makes the antialiased edges of thin strokes more opaque (alpha $a$ drawn as $1 - (1 - a)^{t}$), so formulas read as firmly as the terminal font. `1` draws them as the engine does. |
 | `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams. |
-| `packages` | empty | Extra TeX packages for every formula, separated by commas or spaces. A package that is not installed, or a bad name, is skipped and named in `/typeset status`. |
-| `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. In `settings.json` write `\n` between lines and `\\` for each backslash. |
+| `packages` | empty | Extra TeX packages, separated by commas or spaces. Not used yet: they are for the TeX fallback. |
+| `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. A name the engine already has (`\R`) takes your definition. In `settings.json` write `\n` between lines and `\\` for each backslash. |
+| `cjkFont` | empty | A font file for CJK text in formulas: a path, or `path#index` for a collection (`.ttc`). Empty: the system's own, a serif face (Noto Serif CJK, Source Han Serif) first. |
 | `diagramColor` | `true` | Colour diagrams by role. Off: the text colour alone. |
-
-<details>
-<summary><strong>How packages and macros combine</strong></summary>
-
-`packages` and `macros` are yours, so they go into the preamble (and the format) without the safety check that Claude's formulas get. They load before the mod's own stand-ins, so a package's command wins over the mod's: with `physics`, `\abs`, `\dv`, `\pdv` and `\qty` are physics's own (and physics also redefines `\div`, `\Re` and `\Im`). Your `macros` win over a package: a name you define with `\newcommand`, `\DeclareMathOperator` or `\DeclarePairedDelimiter` replaces the package's command of that name, instead of stopping LaTeX with "already defined".
-
-When the preamble still does not work, the mod keeps what works: your `macros` if they work alone, then each package that still works when added. Each one left out is named, with TeX's error, in `/typeset status`. Changing either option typesets every formula again.
-
-</details>
 
 ## Limitations
 
@@ -249,17 +226,18 @@ When the preamble still does not work, the mod keeps what works: your `macros` i
 - Text in a paragraph with a formula copies as the text around the pictures; a picture copies as nothing. Use `ctrl+o` to see and copy the source.
 - The formula colour follows the desktop scheme (through the XDG portal or GNOME's setting), not a theme set in the terminal alone. Set `foreground` if they differ.
 - After the terminal font size changes, pictures are typeset again within a few seconds; until then the terminal scales them.
-- A formula that mixes Chinese, Japanese and Korean text fails: one CJK font is chosen per formula.
+- CJK text is drawn in one font: Simplified Chinese glyph forms unless `cjkFont` names another.
+- LaTeX packages cannot be loaded: a command from `physics`, `siunitx` and the like shows as text unless `macros` defines it.
 
 ## Troubleshooting
 
-- **Formulas show as Unicode, never as pictures.** Run `/typeset status` and install what it names, then `/typeset clear`. If the backend is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
-- **Formulas are slow to appear.** `/typeset status` shows the daemon and the format. `daemon: not reached` means each batch starts TeX from nothing; the status names each folder the socket could not use and why. `format: not built` usually means a package or macro breaks the preamble, also named there. The first formula after a TeX Live update or an option change waits a few seconds for the format.
-- **Stop the daemon or rebuild the format.** `pkill -f renderd.py` stops the daemon; the next formula starts a new one. Deleting `~/.cache/claude-inline-math/fmt/` makes the next formula build the format again. Then run `/typeset clear`.
+- **Formulas show as Unicode, never as pictures.** Run `/typeset status`; a renderer that is not ready says why (for a clone: build it with `cargo build --release` in `renderer/`). Then `/typeset clear`. If the renderer is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
+- **CJK text in a formula is missing or in the wrong font.** `/typeset status` names the CJK font; set `cjkFont`, or delete `~/.cache/typeset/cjk-font` after installing a new font.
+- **The old cache.** Versions before 4.0.0 kept pictures in `~/.cache/claude-inline-math`; it is no longer used and can be deleted.
 - **Formulas sit too high or too low.** Set `baseline` for your font, and `cell` if tmux reports the wrong size (`tmux display -p '#{client_cell_width}x#{client_cell_height}'`).
 - **Formulas are too large or too small.** Change `ptPx`.
-- **Formulas look faint or thin beside the text.** Raise `thicken` (2 to 2.5), or load a heavier math font with `packages` (`newtxmath`, `fourier`). On a desktop scaled by a fraction (1.25, 1.5) the compositor shrinks the whole window, which thins strokes further.
-- **One formula shows as text.** TeX refused it; `/typeset status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
+- **Formulas look faint or thin beside the text.** Raise `thicken` (2 to 2.5). On a desktop scaled by a fraction (1.25, 1.5) the compositor shrinks the whole window, which thins strokes further.
+- **One formula shows as text.** The engine refused it; `/typeset status` lists recent errors. Check [docs/compatibility.md](docs/compatibility.md).
 - **A diagram shows as source.** The dim line under it says why. A wider window helps when it is too wide.
 - **Claude writes math in code blocks.** Check that `promptHint` is on; the note applies from the next turn.
 - **Lines of base64 appear in the pane, and old lines stay on screen.** Something other than Claude Code wrote to the pane's tty while a picture was being sent, often a hook that sends a desktop notification (`printf '\ePtmux;...' > "#{pane_tty}"`). A picture can be 100 KB or more and goes out in several writes; a sequence that lands between two of them ends the picture early, and tmux draws the rest of it as text. Never write to the tty of a Claude Code pane: send the sequence through another pane, such as a short-lived hidden window with `allow-passthrough all`, as tmux passes each pane's passthrough to the terminal in one piece. Resize or zoom the pane (`prefix z` twice) to redraw it.
@@ -267,4 +245,4 @@ When the preamble still does not work, the mod keeps what works: your `macros` i
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The bundled beautiful-mermaid library is MIT too, see [hooks/vendor/LICENSE](hooks/vendor/LICENSE).
+MIT, see [LICENSE](LICENSE). The bundled beautiful-mermaid library is MIT too, see [hooks/vendor/LICENSE](hooks/vendor/LICENSE). The renderer uses RaTeX (MIT) and its bundled KaTeX fonts (OFL).

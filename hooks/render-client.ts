@@ -2,9 +2,8 @@ import type { EngineInterface, PluginOptions } from 'claude-code'
 
 import type { MathRef, Picture, PictureState } from './layout'
 
-// The one place that runs the backend (bin/client.py, which hands each
-// request to the long-lived render daemon, or renders in-process when the
-// daemon cannot be reached). A draw asks `lookup` for each formula and gets
+// The one place that runs the renderer (typeset-render, the Rust program in
+// renderer/, one run per batch). A draw asks `lookup` for each formula and gets
 // what is ready now; what is missing is queued, with the drawn site (the
 // message's requestId) noted as waiting for it. A worker the session starts
 // (`runWorker`) sends the queue in batched calls a moment later; when a batch
@@ -31,24 +30,20 @@ export type Settings = {
   minShrink: number
   thicken: number // alpha a drawn as 1 - (1 - a)^thicken: firmer strokes
   promptHint: boolean
-  packages: string[] // extra TeX Live packages, in the precompiled format
-  macros: string // the user's own definitions, in the precompiled format
+  packages: string[] // extra TeX Live packages, for the TeX fallback
+  macros: string // the user's own definitions, for every engine
+  cjkFont: string // a font file for CJK text ('' finds one)
   diagramColor: boolean
 }
 
 export type Health = {
   ok: boolean
-  latex: boolean
-  dvipng: boolean
-  pil: boolean
+  version?: string
+  engine?: string
+  cjkFont?: string | null
   cell?: { width: number; height: number }
   fg?: string
-  cacheDir?: string
   problems: string[]
-  // What client.py --check says of the render daemon and the precompiled
-  // format; shapes the backend owns, shown as given.
-  daemon?: unknown
-  format?: unknown
 }
 
 export type Stats = {
@@ -68,7 +63,7 @@ type Result = Picture | Failure
 type Job = { key: string; ref: MathRef; maxColumns: number; eager: boolean }
 type Answer = { cell?: { width: number; height: number }; fg?: string; results?: unknown[] }
 // What one backend call came to: its answer, a failure (`transient`: worth
-// asking again; `down`: python itself cannot run), or 'split' when the answer
+// asking again; `down`: the renderer cannot run at all), or 'split' when the answer
 // was too big to come back whole.
 type Outcome = { answer: Answer } | { failure: string; transient: boolean; down: boolean } | 'split'
 
@@ -83,6 +78,7 @@ export const DEFAULTS: Settings = {
   promptHint: true,
   packages: [],
   macros: '',
+  cjkFont: '',
   diagramColor: true,
 }
 
@@ -91,7 +87,6 @@ const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
 const MAX_COLUMNS = 255 // widest Image the terminal draws
 const COALESCE_MS = 30 // requests closer than this share one backend call
 const PREFETCH_MS = 400 // prefetches gather this long (a draw's request or flush() ends the wait)
-const WARM_AFTER_MS = 60_000 // a turn that starts this long after the last backend call warms the daemon
 const BATCH_ITEMS = 16 // keeps one call well inside its time limit
 const RUN_TIMEOUT_MS = 90_000
 const MAX_PACKAGES = 64
@@ -127,7 +122,6 @@ let wake: (() => void) | undefined
 // Ends the worker's gathering wait sooner: after `ms`, or at once for 0.
 let hurry: ((ms: number) => void) | undefined
 let isUrgent = false // flush() came while the worker was not gathering: its next gathering ends at once
-let lastCallAt = Number.NEGATIVE_INFINITY // performance.now() of the last backend call
 let worker = 0 // the running worker's number; an older one stops
 let cacheBytes = 0
 
@@ -192,6 +186,7 @@ export function readSettings(options: PluginOptions): Settings {
     promptHint: options.promptHint !== false,
     packages: readPackages(options.packages),
     macros: macros.length <= MAX_MACROS ? macros : '',
+    cjkFont: typeof options.cjkFont === 'string' ? options.cjkFont.trim().slice(0, 4096) : '',
     diagramColor: options.diagramColor !== false,
   }
 }
@@ -199,7 +194,7 @@ export function readSettings(options: PluginOptions): Settings {
 /** Takes the settings the module loaded with. */
 export function configure(next: Settings, options: PluginOptions = {}) {
   settings = next
-  setupKey = next.packages.length > 0 || next.macros !== '' ? hash(JSON.stringify([next.packages, next.macros])) : ''
+  setupKey = next.packages.length > 0 || next.macros !== '' || next.cjkFont !== '' ? hash(JSON.stringify([next.packages, next.macros, next.cjkFont])) : ''
   const entries = Number(options.cacheEntries)
   cacheLimits.entries = Number.isInteger(entries) && entries >= 2 ? entries : CACHE_LIMIT
 }
@@ -410,21 +405,6 @@ export function flush() {
   else isUrgent = true
 }
 
-/**
- * A turn is starting: when the backend was last called a while ago (its
- * daemon may have stopped after its idle time), starts it and has it load
- * what the next formula needs, so the first batch of the reply is a warm one.
- */
-export function warmUp($: EngineInterface) {
-  if (backendDown !== undefined) return
-  const now = performance.now()
-  if (now - lastCallAt < WARM_AFTER_MS) return
-  lastCallAt = now
-  void $.process
-    .run(backend($, '--warm'), { stdin: JSON.stringify({ options: setupOptions() }), timeoutMs: CHECK_TIMEOUT_MS })
-    .catch(() => {})
-}
-
 function takeBatch(): Job[] {
   isUrgent = false // what was queued when flush() came goes now
   const batch: Job[] = []
@@ -459,19 +439,19 @@ function settle(job: Job, result: Result, storeKey: string, transient: boolean) 
   remember(storeKey, result)
 }
 
-/** Does a failed run mean python or the backend cannot run at all? */
+/** Does a failed run mean the renderer cannot run at all? */
 function isStartFailure(text: string): boolean {
-  return /ENOENT|EACCES|not found|No such file|cannot (?:start|run|spawn|execute)|spawn/i.test(text)
+  return /ENOENT|EACCES|ENOEXEC|not found|No such file|exec format|cannot (?:start|run|spawn|execute)|spawn/i.test(text)
 }
 
-/** The backend's command line, with `flags`. */
+/** The renderer's command line, with `flags`. */
 function backend($: EngineInterface, ...flags: string[]): string[] {
-  return ['python3', '-I', '-S', `${$.plugin.root}/bin/client.py`, ...flags]
+  return [`${$.plugin.root}/renderer/target/release/typeset-render`, ...flags]
 }
 
-/** What every request carries besides its items: the user's packages and macros. */
-function setupOptions(): { packages: string[]; macros: string } {
-  return { packages: settings.packages, macros: settings.macros }
+/** What every request carries besides its items: the user's packages, macros and CJK font. */
+function setupOptions(): { packages: string[]; macros: string; cjkFont: string } {
+  return { packages: settings.packages, macros: settings.macros, cjkFont: settings.cjkFont }
 }
 
 /** One backend call for `batch`. */
@@ -487,13 +467,11 @@ async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
       ptPx: settings.ptPx,
       minShrink: settings.minShrink,
       thicken: settings.thicken,
-      cacheDir: null, // the backend's own: ~/.cache/claude-inline-math
       maxColumns: batch[0]?.maxColumns ?? MAX_COLUMNS,
       ...setupOptions(),
     },
   }
   let run: Awaited<ReturnType<EngineInterface['process']['run']>>
-  lastCallAt = performance.now()
   try {
     run = await $.process.run(backend($), {
       stdin: JSON.stringify(request),
@@ -503,7 +481,7 @@ async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
     const text = String(err).slice(0, 200)
     if (/time ?out|timed out/i.test(text)) return { failure: `the renderer timed out (${text})`, transient: true, down: false }
 
-    return { failure: `could not run python3: ${text}`, transient: !isStartFailure(text), down: isStartFailure(text) }
+    return { failure: `could not run the renderer: ${text}`, transient: !isStartFailure(text), down: isStartFailure(text) }
   }
   if (run.isStdoutTruncated) return 'split'
   try {
@@ -512,11 +490,9 @@ async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
   } catch {
     // reported below
   }
-  const reason = lastLine(run.stderr) || `client.py exited ${run.exitCode} with no answer`
-  // A missing interpreter or module breaks every formula: stop asking.
-  const down = /ModuleNotFoundError|No module named|can't open file|No such file or directory: .*(?:render|client|renderd)\.py/i.test(reason)
+  const reason = lastLine(run.stderr) || `the renderer exited ${run.exitCode} with no answer`
 
-  return { failure: reason, transient: !down, down }
+  return { failure: reason, transient: true, down: false }
 }
 
 /** Runs the backend for `batch` and keeps what it answered; halves a batch whose answer was too big. */
@@ -655,7 +631,6 @@ async function redrawWaiting($: EngineInterface, batch: Job[]) {
 }
 
 async function runCheck($: EngineInterface): Promise<Health> {
-  lastCallAt = performance.now()
   try {
     const run = await $.process.run(backend($, '--check'), {
       stdin: JSON.stringify({ options: setupOptions() }),
@@ -667,10 +642,7 @@ async function runCheck($: EngineInterface): Promise<Health> {
   } catch (err) {
     return {
       ok: false,
-      latex: false,
-      dvipng: false,
-      pil: false,
-      problems: [`client.py --check failed: ${String(err).slice(0, 300)}`],
+      problems: [`typeset-render --check failed: ${String(err).slice(0, 300)}`],
     }
   }
 }
@@ -693,7 +665,7 @@ function adopt(found: { fg?: unknown; cell?: unknown }): boolean {
 }
 
 /**
- * Runs `client.py --check` and adopts what it found: a broken backend (told
+ * Runs `typeset-render --check` and adopts what it found: a broken backend (told
  * once, then every formula shows as text), a repaired one, or a new colour or
  * cell size (the desktop switched light and dark, the font size changed).
  */
@@ -712,7 +684,7 @@ export async function check($: EngineInterface): Promise<Health> {
   return health
 }
 
-/** `client.py --detect`: the 'auto' colour and cell size alone, without a test render. */
+/** `typeset-render --detect`: the 'auto' colour and cell size alone, without a test render. */
 async function detect($: EngineInterface) {
   try {
     const run = await $.process.run(backend($, '--detect'), {
