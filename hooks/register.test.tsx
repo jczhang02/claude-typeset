@@ -41,8 +41,11 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
   mock.store(on)
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  // A local build of typeset-render (binary.test.tsx covers the download).
+  on('fs.exists', (_, e) => ({ value: e.path.endsWith('/renderer/target/release/typeset-render') }))
   on('process.run', async (_, e) => {
     if (e.argv[0] === 'uname') return ran('Linux\n')
+    if (e.argv[1] === '--version') return ran('typeset-render 4.0.0\n')
     backend.argv.push([...e.argv])
     if (e.argv.includes('--check')) {
       backend.checks += 1

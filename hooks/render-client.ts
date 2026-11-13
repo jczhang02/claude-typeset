@@ -1,5 +1,6 @@
 import type { EngineInterface, PluginOptions } from 'claude-code'
 
+import { forgetRenderer, renderer } from './binary'
 import type { MathRef, Picture, PictureState } from './layout'
 
 // A mermaid block's source for the renderer to draw as a tree (mermaid-text).
@@ -10,7 +11,7 @@ export type DiagramState = Drawing | { error: string; isBackend?: boolean } | 'p
 type Ref = MathRef | DiagramRef
 
 // The one place that runs the renderer (typeset-render, the Rust program in
-// renderer/, one run per batch). A draw asks `lookup` for each formula and gets
+// renderer/, one run per batch; binary.ts finds or downloads it). A draw asks `lookup` for each formula and gets
 // what is ready now; what is missing is queued, with the drawn site (the
 // message's requestId) noted as waiting for it. A worker the session starts
 // (`runWorker`) sends the queue in batched calls a moment later; when a batch
@@ -225,6 +226,7 @@ export function configure(next: Settings, options: PluginOptions = {}) {
       : ''
   const entries = Number(options.cacheEntries)
   cacheLimits.entries = Number.isInteger(entries) && entries >= 2 ? entries : CACHE_LIMIT
+  forgetRenderer() // a reload looks for the program again (a build may have appeared)
 }
 
 /** Called once per backend failure, with the reason, when nothing can be drawn. */
@@ -513,9 +515,13 @@ function isStartFailure(text: string): boolean {
   return /ENOENT|EACCES|ENOEXEC|not found|No such file|exec format|cannot (?:start|run|spawn|execute)|spawn/i.test(text)
 }
 
-/** The renderer's command line, with `flags`. */
-function backend($: EngineInterface, ...flags: string[]): string[] {
-  return [`${$.plugin.root}/renderer/target/release/typeset-render`, ...flags]
+/** The renderer's command line, with `flags`; rejects with the reason there is no renderer to run. */
+async function backend($: EngineInterface, ...flags: string[]): Promise<string[]> {
+  return [await renderer($), ...flags]
+}
+
+function reasonOf(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 300)
 }
 
 /** What every request carries besides its items: the user's packages, macros, CJK font and the TeX fallback switch. */
@@ -540,15 +546,24 @@ async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
       ...setupOptions(),
     },
   }
+  // Found down since this batch was queued: only a check looks for the program again.
+  if (backendDown !== undefined) return { failure: backendDown, transient: false, down: true }
+  let argv: string[]
+  try {
+    argv = await backend($)
+  } catch (err) {
+    return { failure: reasonOf(err), transient: false, down: true }
+  }
   let run: Awaited<ReturnType<EngineInterface['process']['run']>>
   try {
-    run = await $.process.run(backend($), {
+    run = await $.process.run(argv, {
       stdin: JSON.stringify(request),
       timeoutMs: RUN_TIMEOUT_MS,
     })
   } catch (err) {
     const text = String(err).slice(0, 200)
     if (/time ?out|timed out/i.test(text)) return { failure: `the renderer timed out (${text})`, transient: true, down: false }
+    if (isStartFailure(text)) forgetRenderer() // gone or broken: look again at the next check
 
     return { failure: `could not run the renderer: ${text}`, transient: !isStartFailure(text), down: isStartFailure(text) }
   }
@@ -581,8 +596,10 @@ async function runBatch($: EngineInterface, batch: Job[]): Promise<void> {
     return
   }
   if ('failure' in outcome) {
+    // Nothing kept when the renderer cannot run: once a check finds it again
+    // (downloaded, built), the redraw asks for these formulas afresh.
     if (outcome.down) reportDown(outcome.failure)
-    for (const job of batch) settle(job, { error: outcome.failure }, job.key, outcome.transient)
+    else for (const job of batch) settle(job, { error: outcome.failure }, job.key, outcome.transient)
 
     return
   }
@@ -705,8 +722,14 @@ async function redrawWaiting($: EngineInterface, batch: Job[]) {
 }
 
 async function runCheck($: EngineInterface): Promise<Health> {
+  let argv: string[]
   try {
-    const run = await $.process.run(backend($, '--check'), {
+    argv = await backend($, '--check')
+  } catch (err) {
+    return { ok: false, problems: [reasonOf(err)] }
+  }
+  try {
+    const run = await $.process.run(argv, {
       stdin: JSON.stringify({ options: setupOptions() }),
       timeoutMs: CHECK_TIMEOUT_MS,
     })
@@ -744,6 +767,7 @@ function adopt(found: { fg?: unknown; cell?: unknown }): boolean {
  * cell size (the desktop switched light and dark, the font size changed).
  */
 export async function check($: EngineInterface): Promise<Health> {
+  if (backendDown !== undefined) forgetRenderer() // look for the program afresh: it may be there now
   const health = await runCheck($)
   if (!health.ok) {
     reportDown(health.problems.join('; ') || 'the renderer is not ready')
@@ -761,7 +785,7 @@ export async function check($: EngineInterface): Promise<Health> {
 /** `typeset-render --detect`: the 'auto' colour and cell size alone, without a test render. */
 async function detect($: EngineInterface) {
   try {
-    const run = await $.process.run(backend($, '--detect'), {
+    const run = await $.process.run(await backend($, '--detect'), {
       timeoutMs: DETECT_TIMEOUT_MS,
     })
     if (adopt(JSON.parse(run.stdout) as { fg?: unknown; cell?: unknown }) && (cache.size > 0 || diagramsShown)) $.ui.invalidate('ui.render')
