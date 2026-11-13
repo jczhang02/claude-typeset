@@ -33,7 +33,9 @@
 
 > Formerly `inline-math`. The command is now `/typeset`, and the options live under `typeset@…` in `pluginConfigs` (move your old `inline-math@…` entry). A stored `/inline-math off` does not carry over: the mod starts on.
 
-You need Claude Code 2.1.311 or later and a terminal with the kitty graphics protocol (Ghostty or kitty). Formulas are drawn by `typeset-render`, a Rust program in `renderer/`; until 4.0.0 is released it is built from a clone (see below) with a Rust toolchain. Tested on Linux with Ghostty and tmux 3.8 (passthrough needs tmux 3.3 or later); macOS should work but is untested.
+You need Claude Code 2.1.311 or later and a terminal with the kitty graphics protocol (Ghostty or kitty). Tested on Linux with Ghostty and tmux 3.8 (passthrough needs tmux 3.3 or later); macOS should work but is untested.
+
+Formulas are drawn by `typeset-render`, a Rust program in `renderer/`. On first use the mod downloads the build for your platform (Linux x86_64 or arm64, static; macOS arm64 or x86_64) from the GitHub release with `curl`, checks its sha256 against `renderer/checksums.json` with `sha256sum` (`shasum` on macOS), and runs it only if the sum matches. It is kept in `~/.cache/typeset/bin/<version>/` (`$XDG_CACHE_HOME/typeset/...`) and checked again at every session start. Until the release's sums are merged into `checksums.json`, there is nothing to download: build it from a clone (see below). A clone's own build, `renderer/target/release/typeset-render`, is used first when it runs. No Rust toolchain is needed otherwise.
 
 Chinese, Japanese or Korean text inside a formula needs a CJK font on the system (Noto CJK or Source Han; on macOS the system's own).
 
@@ -79,13 +81,15 @@ cargo build --release --manifest-path ~/Documents/dev-tools/claude-typeset/rende
 claude --plugin-dir ~/Documents/dev-tools/claude-typeset    # this session only
 ```
 
-For every session, add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` (use `:` between several folders). Claude Code reloads the mod when you save a file. Use either this or the marketplace install, not both.
+The mod runs this build and downloads nothing; rebuild after pulling changes to `renderer/`. Without a build it falls back to the download, as an installed copy does. For every session, add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` (use `:` between several folders). Claude Code reloads the mod when you save a file. Use either this or the marketplace install, not both.
 
 ```json
 { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/Documents/dev-tools/claude-typeset" } }
 ```
 
 Update an installed copy with `claude plugin update typeset@claude-typeset`.
+
+Checks before a pull request and how a release is made: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
@@ -280,6 +284,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 ## Troubleshooting
 
 - **Formulas show as Unicode, never as pictures.** Run `/typeset status`; a renderer that is not ready says why (for a clone: build it with `cargo build --release` in `renderer/`). Then `/typeset clear`. If the renderer is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
+- **The renderer could not be downloaded.** The notice says why: `could not download` (offline, a proxy; `curl` must reach github.com), `failed its sha256 check` (the file was deleted and never run), `no release binary ... yet` (this version's release sums are not merged yet: build from a clone), or `no renderer for <os> <arch>` (no build for this platform: build from a clone). The mod tries again every minute and draws formulas once it succeeds. Deleting `~/.cache/typeset/bin` makes it download afresh.
 - **CJK text in a formula is missing or in the wrong font.** `/typeset status` names the CJK font; set `cjkFont`, or delete `~/.cache/typeset/cjk-font` after installing a new font.
 - **The old cache.** Versions before 4.0.0 kept pictures in `~/.cache/claude-inline-math`; it is no longer used and can be deleted.
 - **A TeX picture is stale** (after a TeX Live update, say). TeX pictures are kept in `~/.cache/typeset/tex`; delete the folder, then `/typeset clear`. Installing a package needs neither: formulas are typeset again with it.
