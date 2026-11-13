@@ -1,5 +1,6 @@
 //! typeset-render: renders the LaTeX in Claude Code replies to PNG pictures
-//! that fill whole terminal cells. The mod runs it once per batch.
+//! that fill whole terminal cells, and mermaid trees to lines of text. The
+//! mod runs it once per batch.
 //!
 //!     typeset-render            JSON request on stdin, JSON answer on stdout
 //!     typeset-render --check    JSON health (an optional {"options": {...}} on stdin)
@@ -10,6 +11,7 @@
 
 mod cache;
 mod detect;
+mod diagram;
 mod fit;
 mod fonts;
 mod normalize;
@@ -70,6 +72,15 @@ fn plan_item(
     cell: protocol::Cell,
     tex: &tex::Tex,
 ) -> Plan {
+    if item.kind == Kind::Diagram {
+        return Plan::Done(match diagram::draw(&item.latex, cfg.max_columns as usize) {
+            Ok(drawing) => ItemResult::Drawing {
+                lines: drawing.lines,
+                columns: drawing.columns as u32,
+            },
+            Err(error) => ItemResult::failure(error),
+        });
+    }
     if item.kind == Kind::Tikz {
         if item.latex.chars().count() > MAX_TIKZ {
             return Plan::Done(ItemResult::failure(format!(
@@ -116,7 +127,9 @@ fn render(request: &Value) -> Value {
     let cell = detect::detect_cell(&cfg.cell);
     let fg = detect::detect_fg(&cfg.fg);
     let colour = detect::rgb(&fg);
-    if items.iter().any(|item| fonts::needs_cjk(&item.latex)) || fonts::needs_cjk(&cfg.macros) {
+    // A diagram is text: only pictures need the CJK font.
+    let pictured = |item: &&protocol::Item| item.kind != Kind::Diagram;
+    if items.iter().filter(pictured).any(|item| fonts::needs_cjk(&item.latex)) || fonts::needs_cjk(&cfg.macros) {
         fonts::install(&cfg.cjk_font);
     }
     let macros = ratex::user_macros(&cfg.macros);

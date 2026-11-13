@@ -367,3 +367,78 @@ fn places_the_corpus_on_the_cells_the_old_backend_did() {
     assert!(close_share >= 0.97, "{close_share:.3} within one cell; far: {far:?}");
     assert!(row_share >= 0.99, "{row_share:.3} on the same text row");
 }
+
+/// A ```mermaid block's source, from tests/fixtures/mermaid.
+fn mermaid(name: &str) -> String {
+    let path = format!("{}/tests/fixtures/mermaid/{name}.mmd", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(path).unwrap()
+}
+
+fn diagram(source: &str, max_columns: u32) -> Value {
+    let results = render(
+        json!([{ "latex": source, "kind": "diagram" }]),
+        json!({ "maxColumns": max_columns }),
+    );
+    results[0].clone()
+}
+
+fn drawn_lines(answer: &Value) -> Vec<String> {
+    let lines = answer["lines"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no drawing: {answer}"));
+    lines.iter().map(|line| line.as_str().unwrap().to_string()).collect()
+}
+
+/// The text of every `id["label"]` in a flowchart.
+fn flowchart_labels(source: &str) -> Vec<String> {
+    let label = regex::Regex::new(r#"\["([^"]*)"\]"#).unwrap();
+    label.captures_iter(source).map(|c| c[1].to_string()).collect()
+}
+
+#[test]
+fn tree_flowcharts_draw_as_the_mindmaps_they_are() {
+    // Claude's own diagrams, written both ways: about 40 nodes, Chinese labels.
+    for (tree, mind, size) in [
+        ("tree-short", "mindmap-short", (60, 38)),
+        ("tree-long", "mindmap-long", (67, 39)),
+    ] {
+        let flow = diagram(&mermaid(tree), 255);
+        let lines = drawn_lines(&flow);
+        assert_eq!(lines, drawn_lines(&diagram(&mermaid(mind), 255)), "{tree} and {mind}");
+        assert_eq!((flow["columns"].as_u64().unwrap(), lines.len() as u64), size, "{tree}");
+        // Every label as written, each on a line of its own.
+        for label in flowchart_labels(&mermaid(tree)) {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.ends_with(&format!("── {label}")) || line == &format!("│ {label} │")),
+                "{tree}: {label} not drawn as written"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_flowchart_that_is_not_a_tree_is_left_to_the_hooks() {
+    let results = render(
+        json!([
+            { "latex": "graph TD\n  A --> C\n  B --> C", "kind": "diagram" },
+            { "latex": "flowchart LR\n  A -->|yes| B", "kind": "diagram" },
+            { "latex": "x", "display": false },
+        ]),
+        options(),
+    );
+    assert_eq!(results[0]["error"], "not a tree: C has two parents");
+    assert_eq!(results[1]["error"], "not a tree: an edge has a label");
+    assert!(results[2]["png"].is_string(), "a formula in the same batch draws");
+}
+
+#[test]
+fn a_diagram_keeps_to_max_columns() {
+    let source = mermaid("tree-long");
+    let narrow = diagram(&source, 40);
+    let lines = drawn_lines(&narrow);
+    assert!(narrow["columns"].as_u64().unwrap() <= 40);
+    assert!(lines.iter().any(|line| line.ends_with('…')), "long labels cut");
+    assert_eq!(diagram(&source, 16)["error"], "tree is 67 columns wide, 16 available");
+}
