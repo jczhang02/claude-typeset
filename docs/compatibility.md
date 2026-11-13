@@ -100,14 +100,15 @@ refuses it too, the error names both (`ParseError: ...; TeX: ! ...`).
 - **One run per formula.** Fallback is rare, so each formula runs alone
   (up to four side by side); a call's TeX runs together get 30 s, after
   which its formulas fail with "timeout" and are asked for again later.
-- **Cache.** TeX pictures, and errors that come from the formula itself,
-  are kept in `$XDG_CACHE_HOME/typeset/tex` (else `~/.cache/typeset/tex`),
-  keyed by a SHA-256 of the renderer version, the options that change the
-  picture (colour, cell size, baseline, `ptPx`, `minShrink`, `thicken`,
-  width, `packages`, `macros`), the packages TeX Live has and the
-  formula; at most 2000 entries or
-  200 MB, the least recently used deleted first. RaTeX's pictures are not
-  kept on disk.
+- **Cache.** TeX pictures, and errors that come from the formula itself
+  (TeX's own `!` errors, too large; not a time or memory limit, which a
+  busy machine may hit), are kept in `$XDG_CACHE_HOME/typeset/tex` (else
+  `~/.cache/typeset/tex`), keyed by a SHA-256 of the renderer version,
+  the options that change the picture (colour, cell size, baseline,
+  `ptPx`, `minShrink`, `thicken`, width, `packages`, `macros`) and the
+  formula; an error also by the packages TeX Live has, so installing the
+  missing one clears it. At most 2000 entries or 200 MB, the least
+  recently used deleted first. RaTeX's pictures are not kept on disk.
 
 On the corpora, the TeX fallback draws `\SI`, `\si`, `\dv`, `\pdv`, `\dd`,
 `\vb*`, `\qty`, `\mapsfrom`, `\reflectbox`, plain TeX's `\root` and

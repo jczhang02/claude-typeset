@@ -222,7 +222,8 @@ fn measured(log: &str) -> Option<(f64, f64, f64)> {
 /// Why a TeX run gave no picture.
 #[derive(Debug)]
 enum Failure {
-    /// The input's own fault, the same every time: kept on disk.
+    /// The input's fault: a TeX error or a size is kept on disk, a limit
+    /// it ran into is not (see `cached`).
     Refused(String),
     /// A passing reason (a tool, the request's time): not kept.
     Passing(String),
@@ -446,7 +447,13 @@ impl<'a> Tex<'a> {
         }
         let (result, key) = match make() {
             Ok(picture) => (picture.by("tex"), Some(&picture_key)),
-            Err(Failure::Refused(error)) => (ItemResult::failure(explain(error)), Some(&refusal_key)),
+            Err(Failure::Refused(error)) => {
+                // As in the old backend, a TeX error or a size is kept; a
+                // time or memory limit may be the machine's (busy, a cold
+                // TeX Live) and is not.
+                let lasting = error.starts_with('!') || error.starts_with("too large");
+                (ItemResult::failure(explain(error)), lasting.then_some(&refusal_key))
+            }
             Err(Failure::Passing(error)) => (ItemResult::failure(error), None),
         };
         if let Some(key) = key
