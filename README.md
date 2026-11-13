@@ -24,7 +24,7 @@
 - **Fast**: a native renderer brings one new formula to about 4 ms and ten to about 18 ms; redrawing a typeset reply costs under 2 ms
 - **Broad coverage**: [RaTeX](https://github.com/erweixin/RaTeX), a KaTeX-compatible engine in Rust, checked against the KaTeX function list (99.5 % drawn), with `mhchem`, `amscd` and your own macros; no TeX installation needed
 - **TeX fallback**: with TeX Live installed, a formula RaTeX cannot typeset (`\SI`, `\dv`, `\pdv`, `tikz-cd`) is typeset by TeX instead, on the same baseline
-- **Mermaid diagrams as text art**: flowcharts, sequence, state, class, ER and xychart diagrams drawn in box-drawing characters, coloured by role in Catppuccin
+- **Mermaid diagrams as text art**: flowcharts, sequence, state, class, ER and xychart diagrams drawn in box-drawing characters, coloured by role in Catppuccin; mindmaps and tree-shaped flowcharts as vertical outline trees
 - **TikZ pictures**: a ` ```tikz ` block is drawn as a picture in the text colour, scaled to the reply (needs TeX Live and Ghostscript)
 - **Chinese, Japanese and Korean**: wide characters count as two cells, so text, CJK and formulas wrap together; `\text{面积}` typesets with the system's CJK font
 - **Safe by default**: the engine only lays out math; TeX runs in a private folder with no shell escape, no file access outside it, and time and memory limits, so nothing in a reply can read your files, run programs, or change how another formula is drawn
@@ -138,12 +138,34 @@ A closed ` ```mermaid ` block, at the top level of a reply or in a list item, is
 
 A diagram the mod cannot draw correctly is shown as source, with one dim line under it that says why, never as a drawing that says something the source does not:
 
-- Other kinds (`pie`, `gantt`, `mindmap`, ...) and blocks the library cannot parse.
+- Other kinds (`pie`, `gantt`, ...) and blocks the library cannot parse.
 - Diagrams that are too big: more than 80 rows, 8000 characters or 150 lines, a flowchart of more than 100 nodes or 60 nodes in subgraphs, or wider than the reply. The reason names each layout tried and the limit it broke, such as `left-right: 82 rows, limit 80; top-down: 806 columns, 170 available`.
 - A few loops the layout cannot route: a cycle that enters a subgraph, edges both ways between two nodes of the same layer, an edge written twice, and a node with a self loop plus another loop.
 - A flowchart or state diagram whose drawing dropped an edge, an arrowhead or a label, put a line inside a box, or ran a line off the canvas, after the other layouts were tried.
 
 `style`, `classDef`, `class`, `linkStyle` and `click` statements are ignored; entity codes (`#quot;`) and markdown-string labels draw as their text.
+
+A `mindmap`, and a flowchart shaped as a tree, are drawn by the renderer instead (with the [mermaid-text](https://crates.io/crates/mermaid-text) crate) as a vertical outline: the root in a box, every other node on a line of its own under its parent. Laid out as boxes, a tree stacks all nodes of one depth in one column and merges the lines from different parents into one trunk, so you cannot tell whose child a node is, and a wide tree soon runs past 80 rows or the reply's width. The outline keeps every parent visible and grows down:
+
+```text
+╭──────────────╮
+│ QPN 求解 MAE │
+╰───────┬──────╯
+        │
+        ├── 1 问题: 主线句 1, 已定
+        │   ├── 解必须凸
+        │   └── 残差逐点依赖 Hessian
+        ├── 2 缺口: 主线句 2, 改写待确认
+        │   ├── 非凸网络: 可能收敛到凹解
+        │   └── 所有神经求解器: 无先验误差估计
+        └── 5 证据
+            └── ADR 0003 对比实验: 进行中
+```
+
+- A flowchart counts as a tree when it has one root, at most one parent per node, no edge labels, no subgraphs, no cycles, and some node with two children or more (a plain chain of steps stays a row of boxes). It is drawn in that order: the root first, each node's children in the order their edges are written, labels as written, shapes dropped.
+- Node shapes, icons (`::icon(...)`) and classes (`:::name`) of a mindmap are not drawn. A mindmap with two roots is refused, as mermaid refuses it.
+- Labels too long for the reply are cut with `…`; a tree that still does not fit, or is more than 80 rows, shows as source with the reason.
+- While the renderer draws it (a few milliseconds, usually done while the reply streams), a mindmap shows as source and a flowchart as boxes. Without the renderer a tree flowchart is drawn as boxes and a mindmap shows as source.
 
 ### TikZ
 
@@ -237,7 +259,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 | `ptPx` | `3.4` | Formula size in pixels per TeX point (a formula's body size is 10 pt). 3.4 matches a 12 pt font with 42 px cells. |
 | `minShrink` | `0.8` | How far an inline formula may shrink to stay on one row before it takes more rows. |
 | `thicken` | `1.8` | Makes the antialiased edges of thin strokes more opaque (alpha $a$ drawn as $1 - (1 - a)^{t}$), so formulas read as firmly as the terminal font. `1` draws them as the engine does. |
-| `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams, tikz blocks as pictures. |
+| `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams (`mindmap` for hierarchies), tikz blocks as pictures. |
 | `texFallback` | `true` | Typeset a formula the built-in engine refuses with TeX Live, when `latex` and `dvipng` are installed; also what draws `tikz-cd` and ` ```tikz ` blocks. Off: such formulas show as text, tikz blocks as source. |
 | `packages` | empty | Extra TeX packages for the TeX fallback, separated by commas or spaces (`physics, tensor`); a ` ```tikz ` block may load them too. One that is not installed is skipped, and `/typeset status` names it. |
 | `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. A name the engine already has (`\R`) takes your definition. In `settings.json` write `\n` between lines and `\\` for each backslash. |
@@ -273,4 +295,4 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The bundled beautiful-mermaid library is MIT too, see [hooks/vendor/LICENSE](hooks/vendor/LICENSE). The renderer uses RaTeX (MIT) and its bundled KaTeX fonts (OFL); the TeX fallback runs your own TeX Live.
+MIT, see [LICENSE](LICENSE). The bundled beautiful-mermaid library is MIT too, see [hooks/vendor/LICENSE](hooks/vendor/LICENSE). The renderer uses RaTeX (MIT) and its bundled KaTeX fonts (OFL), and mermaid-text (MIT) for trees; the TeX fallback runs your own TeX Live.
