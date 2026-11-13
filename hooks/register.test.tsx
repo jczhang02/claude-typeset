@@ -843,6 +843,9 @@ describe('mermaid trees', () => {
     expect(art).not.toContain('shown as source')
     await clock.advance(1000)
     expect(backend.batches).toHaveLength(1)
+    // Drawn after all: not among the errors /typeset status lists.
+    const { text: status } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(status).not.toContain('not a tree')
     await ui.unmount()
   })
 
