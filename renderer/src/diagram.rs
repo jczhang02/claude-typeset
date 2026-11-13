@@ -37,7 +37,7 @@ pub fn draw(source: &str, max_columns: usize) -> Result<Drawing, String> {
     if source.chars().count() > MAX_SOURCE {
         return Err(format!("diagram source is over {MAX_SOURCE} characters"));
     }
-    let source = clean(source);
+    let source = join_strings(&clean(source))?;
     let lines: Vec<&str> = source.lines().filter(|line| !skipped(line)).collect();
     if lines.len() > MAX_LINES {
         return Err(format!("diagram source is over {MAX_LINES} lines"));
@@ -77,6 +77,36 @@ fn clean(source: &str) -> String {
         }
     }
     text
+}
+
+/// A markdown string that runs over lines ("`one\ntwo`", as mermaid
+/// allows) put on one line, which both parsers need: else each line of it
+/// would be read as a node of its own. One that never closes is refused,
+/// as mermaid refuses it.
+fn join_strings(source: &str) -> Result<String, String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        let open = line
+            .rfind("\"`")
+            .is_some_and(|start| !line[start + 2..].contains("`\""));
+        if !open {
+            out.push(line.to_string());
+            at += 1;
+            continue;
+        }
+        let Some(close) = (at + 1..lines.len()).find(|&next| lines[next].contains("`\"")) else {
+            return Err("a markdown string (\"`...`\") never closes".into());
+        };
+        // The first line's indentation stays: in a mindmap it is the depth.
+        let indent = &line[..line.len() - line.trim_start().len()];
+        let parts: Vec<&str> = lines[at..=close].iter().map(|part| part.trim()).collect();
+        out.push(format!("{indent}{}", parts.join(" ")));
+        at = close + 1;
+    }
+    Ok(out.join("\n"))
 }
 
 /// Blank lines and %% comments (and %%{init}%% directives), which neither parser draws.
@@ -417,6 +447,16 @@ mod tests {
         );
         // Inside a label an arrow is text.
         assert_eq!(drawn("graph TD\n A --> B[\"x ---> y\"]\n A --> C")[4], "  ├── x ---> y");
+    }
+
+    #[test]
+    fn a_markdown_string_over_lines_is_one_label() {
+        let lines = drawn("mindmap\n  root\n    a[\"`line one\n  line two`\"]\n    b");
+        assert_eq!(lines[4..], ["    ├── line one line two", "    └── b"]);
+        assert_eq!(
+            refusal("mindmap\n  root\n    a[\"`never closed\n    b"),
+            "a markdown string (\"`...`\") never closes"
+        );
     }
 
     #[test]

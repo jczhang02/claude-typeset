@@ -219,7 +219,8 @@ mermaid-text crate (0.58.0), an outline under a boxed root
 - `mindmap`: nodes by indentation, the first one the root. The text inside
   a shape (`((text))`, `[text]`, `{{text}}`, `))text((` and the rest) is
   drawn without the shape; quotes, markdown-string backticks and `<br>`
-  go. `::icon(...)`, `:::class` lines, `%%` comments and front matter are
+  go, and a markdown string over several lines is one line of label (one
+  that never closes is refused). `::icon(...)`, `:::class` lines, `%%` comments and front matter are
   skipped. A second root is refused ("mindmap has more than one root").
 - Flowcharts (`flowchart`, `graph`, any direction): parsed by the crate
   (long arrows such as `--->`, `----` and `-..->` first made the short
