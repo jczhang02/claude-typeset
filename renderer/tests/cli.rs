@@ -18,17 +18,28 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-fn run(args: &[&str], stdin: &str) -> Value {
+/// A cache folder no other run shares.
+fn fresh_cache() -> std::path::PathBuf {
     static COUNT: AtomicU32 = AtomicU32::new(0);
-    let cache = std::env::temp_dir().join(format!(
+    std::env::temp_dir().join(format!(
         "typeset-test-cache-{}-{}",
         std::process::id(),
         COUNT.fetch_add(1, Ordering::Relaxed)
-    ));
+    ))
+}
+
+fn run(args: &[&str], stdin: &str) -> Value {
+    let cache = fresh_cache();
+    let answer = run_with_cache(args, stdin, &cache);
+    let _ = std::fs::remove_dir_all(&cache);
+    answer
+}
+
+fn run_with_cache(args: &[&str], stdin: &str, cache: &std::path::Path) -> Value {
     let mut child = Command::new(env!("CARGO_BIN_EXE_typeset-render"))
         .args(args)
         .env("TMUX", "") // never ask a tmux server the test happens to run under
-        .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CACHE_HOME", cache)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -36,7 +47,6 @@ fn run(args: &[&str], stdin: &str) -> Value {
         .expect("the program starts");
     child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
-    let _ = std::fs::remove_dir_all(&cache);
     assert!(out.status.success(), "exit status {:?}", out.status);
     serde_json::from_slice(&out.stdout).expect("JSON on stdout")
 }
@@ -195,10 +205,28 @@ fn tex_in_an_endless_loop_is_stopped_by_the_time_limit() {
         return;
     }
     let started = Instant::now();
-    let results = render(json!([{ "latex": r"\def\a{\a}\a", "display": false }]), options());
+    let cache = fresh_cache();
+    let request = json!({
+        "items": [
+            { "latex": r"\def\a{\a}\a", "display": false },
+            { "latex": r"\nosuchcommand", "display": false },
+        ],
+        "options": options(),
+    });
+    let results = run_with_cache(&[], &request.to_string(), &cache)["results"].clone();
+    let kept = std::fs::read_dir(cache.join("typeset").join("tex")).map_or(0, |dir| dir.count());
+    let _ = std::fs::remove_dir_all(&cache);
     let error = results[0]["error"].as_str().unwrap();
     assert!(error.contains("TeX took longer than"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
+    // TeX's own error is kept on disk; the time limit, which a busy machine
+    // may hit too, is not.
+    assert!(
+        results[1]["error"].as_str().unwrap().contains("TeX: !"),
+        "{}",
+        results[1]
+    );
+    assert_eq!(kept, 1);
 }
 
 #[test]
