@@ -42,6 +42,14 @@ const DOWNLOAD_TIMEOUT_MS = (CURL_MAX_SECONDS + 30) * 1000
 // A temporary file this old was left by a session that died while downloading.
 const STALE_PART_MS = 3_600_000
 
+// A download that failed its sha256 check is not fetched again at every
+// health check (once a minute while down): the next try most likely gets the
+// same file (an asset replaced after its sum was recorded, a proxy that
+// rewrites it) and costs the whole program each time. The wait starts here
+// and doubles up to REFUSED_MAX_MS; a download that passes ends it.
+const REFUSED_FIRST_MS = 300_000
+const REFUSED_MAX_MS = 3_600_000
+
 type Sums = { version: string; targets: Record<string, unknown> }
 
 // The search under way or done, shared by every caller of one module (the
@@ -49,6 +57,8 @@ type Sums = { version: string; targets: Record<string, unknown> }
 // Only a found path is kept; a failure is searched again on the next call.
 let found: Promise<string> | undefined
 let isSearching = false
+// The last sum a download failed, why, and when the next download may go.
+let refused: { sum: string; reason: string; until: number; waitMs: number } | undefined
 
 /** The renderer's path, found (and downloaded) once; rejects with the reason it cannot run. */
 export function renderer($: EngineInterface): Promise<string> {
@@ -184,7 +194,13 @@ async function download($: EngineInterface, dir: string, file: string, asset: st
       throw new Error(`could not download ${asset} (${err instanceof Error ? err.message : String(err)})`)
     }
     const got = await sha256($, part, os)
-    if (got !== sum) throw new Error(`the downloaded ${PROGRAM} failed its sha256 check (expected ${sum.slice(0, 12)}…, got ${got.slice(0, 12)}…) and was deleted`)
+    if (got !== sum) {
+      const reason = `the downloaded ${PROGRAM} failed its sha256 check (expected ${sum.slice(0, 12)}…, got ${got.slice(0, 12)}…) and was deleted`
+      const waitMs = refused?.sum === sum ? Math.min(2 * refused.waitMs, REFUSED_MAX_MS) : REFUSED_FIRST_MS
+      refused = { sum, reason, until: (await $.clock.now()) + waitMs, waitMs }
+      throw new Error(reason)
+    }
+    refused = undefined
     await tool($, ['chmod', '755', part])
     await tool($, ['mv', '-f', part, file])
   } finally {
@@ -222,6 +238,7 @@ async function locate($: EngineInterface): Promise<string> {
     }
     await remove($, file)
   }
+  if (refused?.sum === sum && (await $.clock.now()) < refused.until) throw new Error(refused.reason)
   const asset = `${PROGRAM}-${target}`
   await download($, dir, file, asset, `${REPO}/v${version}/${asset}`, sum, os)
   const says = await versionOf($, file)
