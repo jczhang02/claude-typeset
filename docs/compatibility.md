@@ -1,18 +1,21 @@
 # Compatibility
 
 What the renderer (`typeset-render`, the Rust program in `renderer/`)
-draws, measured on three corpora in `renderer/tests/corpus/`:
+draws, measured on three corpora in `renderer/tests/corpus/`, with RaTeX
+alone and with the TeX fallback (TeX Live 2024):
 
-| Corpus | Source | Formulas | Drawn |
-|---|---|---|---|
-| `katex.txt` | every formula of KaTeX's [support table](https://katex.org/docs/support_table.html) and [supported functions](https://katex.org/docs/supported.html) pages (fetched 2026-10-27) | 1200 | 1194 (99.5 %) |
-| `claude.txt` | formulas as Claude writes them: analysis, linear algebra, probability, ML, physics, chemistry, CS, Chinese `\text`, aligned derivations | 239 | 233 (97.5 %) |
-| `mathjax.txt` | examples for the MathJax 3 TeX extensions (base, ams, amscd, bbox, boldsymbol, braket, cancel, cases, centernot, color, colorv2, empheq, enclose, extpfeil, gensymb, html, mathtools, mhchem, physics, upgreek, unicode, verb, textmacros, action) | 150 | 93 (62.0 %) |
+| Corpus | Source | Formulas | Drawn | With TeX Live |
+|---|---|---|---|---|
+| `katex.txt` | every formula of KaTeX's [support table](https://katex.org/docs/support_table.html) and [supported functions](https://katex.org/docs/supported.html) pages (fetched 2026-10-27) | 1200 | 1194 (99.5 %) | 1197 (99.8 %) |
+| `claude.txt` | formulas as Claude writes them: analysis, linear algebra, probability, ML, physics, chemistry, CS, Chinese `\text`, aligned derivations | 239 | 233 (97.5 %) | 239 (100 %) |
+| `mathjax.txt` | examples for the MathJax 3 TeX extensions (base, ams, amscd, bbox, boldsymbol, braket, cancel, cases, centernot, color, colorv2, empheq, enclose, extpfeil, gensymb, html, mathtools, mhchem, physics, upgreek, unicode, verb, textmacros, action) | 150 | 93 (62.0 %) | 131 (87.3 %) |
 
 `renderer/tests/fixtures/geometry.json` holds every corpus formula with
 the cells the previous backend (TeX, v3) drew it on. `cargo test` in
 `renderer/` checks that at least 97 % of the formulas both draw land on
-the same cells, give or take one, and 99 % on the same text row.
+the same cells, give or take one, and 99 % on the same text row, and
+reports how many drew through the TeX fallback (47 here). With TeX Live
+on `PATH` it also checks that every formula of `claude.txt` draws.
 
 ## How a formula gets drawn
 
@@ -32,7 +35,9 @@ the same cells, give or take one, and 99 % on the same text row.
    engine, typesets it at three times the terminal's pixel size, after the
    built-in definitions and the user's `macros`. Its fonts are KaTeX's
    (Computer Modern), built into the program; characters they lack (CJK
-   text) are drawn with the system font described below.
+   text) are drawn with the system font described below. When RaTeX
+   refuses the formula, TeX typesets it instead, if it can (see "TeX
+   fallback"); a `tikzcd` environment goes to TeX at once.
 4. `fit.rs` crops the ink, scales it down to whole terminal cells with its
    baseline on the text baseline of one cell row (the same arithmetic as
    the previous backend), firms up thin strokes (`thicken`) and encodes a
@@ -53,8 +58,124 @@ does not have them. A user's `macros` replace them.
 Only forms that cannot draw something other than what was meant are
 defined: physics' `\dv`, `\pdv` and `\dd` take their arguments in several
 ways (`\dv{x}` is an operator, `\dv{f}{x}` a derivative, `\pdv{f}{x}{y}`
-a mixed one), and a macro that guessed wrong would draw a wrong formula
-without a word. Those show as text; define the form you use in `macros`.
+a mixed one), and a KaTeX macro that guessed wrong would draw a wrong
+formula without a word. The TeX fallback reads them all as physics does;
+without TeX Live they show as text, so define the form you use in
+`macros`.
+
+## TeX fallback
+
+When RaTeX refuses a formula (a parse or layout error), the option
+`texFallback` is on (the default) and `latex` and `dvipng` are on `PATH`,
+TeX Live typesets it instead. Otherwise RaTeX's error stands. When TeX
+refuses it too, the error names both (`ParseError: ...; TeX: ! ...`).
+
+- **Preamble**, as the previous backend's: `\documentclass[10pt]{article}`
+  with `fontenc` (T1, OT1), `lmodern`, `amsmath`, `amssymb`, `mathtools`,
+  `mathrsfs`, `cancel`, `xcolor`, `bm`, `CJKutf8`, `mhchem`, `siunitx`,
+  `dsfont`, `stmaryrd`, `amscd`, `ulem` and `centernot`, each loaded when
+  installed (kpsewhich finds them; `preview`, `amsmath` and `amssymb` are
+  needed). Then the user's `packages` (those installed), `preview` for a
+  page as tight as the formula, the user's `macros` (each name they define
+  first set to undefined, so theirs wins over a package's) and
+  `renderer/src/compat.tex`.
+- **compat.tex** defines what models write without loading a package:
+  physics' `\dv`, `\pdv` (with the mixed `\pdv{f}{x}{y}`), `\dd`, `\vb`,
+  `\qty`, `\pqty`, `\bra`, `\ket`, `\braket`, `\comm`, `\order`,
+  `\mqty` and more, without the physics package (which redefines `\div`,
+  `\Re` and `\Im`); a user who lists `physics` in `packages` gets the
+  package's own. siunitx's `\qty{1}{\metre}` still works: a `\qty{...}`
+  followed by a second group is siunitx's. KaTeX's and MathJax's aliases
+  (`\reals`, `\R`, `\argmax`, `\upalpha`, `\Bra`...) and CSS colour
+  names are defined too. A glyph missing from TeX's fonts is an error,
+  not a blank.
+- **Scale and baseline.** dvipng rasters at `ptPx * 72.27 * 3` dpi, the
+  scale RaTeX draws at, with `--depth` (which counts preview's border), so
+  `fit.rs` places the picture with the same arithmetic, its baseline on
+  the text baseline. A formula too wide for the reply is rastered smaller
+  rather than at full size and shrunk.
+- **Fonts.** A TeX formula is drawn in Latin Modern, close to but not the
+  same as KaTeX's fonts. CJK text goes through CJKutf8 (Korean for Hangul,
+  Japanese for kana, else Simplified Chinese), not the system font.
+- **One run per formula.** Fallback is rare, so each formula runs alone
+  (up to four side by side); a call's TeX runs together get 30 s, after
+  which its formulas fail with "timeout" and are asked for again later.
+- **Cache.** TeX pictures, and errors that come from the formula itself,
+  are kept in `$XDG_CACHE_HOME/typeset/tex` (else `~/.cache/typeset/tex`),
+  keyed by a SHA-256 of the renderer version, the options that change the
+  picture (colour, cell size, baseline, `ptPx`, `minShrink`, `thicken`,
+  width, `packages`, `macros`) and the formula; at most 2000 entries or
+  200 MB, the least recently used deleted first. RaTeX's pictures are not
+  kept on disk.
+
+On the corpora, the TeX fallback draws `\SI`, `\si`, `\dv`, `\pdv`, `\dd`,
+`\vb*`, `\qty`, `\mapsfrom`, `\reflectbox`, plain TeX's `\root` and
+`\buildrel`, and most mathtools extras. It still refuses `\cases` and
+`\matrix{...\cr...}` (amsmath rejects the old forms), `\moveleft`,
+`\mathreflectbox`, and MathJax's own `\bbox`, `\enclose`, `\unicode`,
+`\class`, `\style`, `\require` and the like, which LaTeX lacks.
+
+## tikz-cd
+
+`\begin{tikzcd}...\end{tikzcd}` in a formula (as a reply writes it,
+inside `$$...$$`) goes straight to TeX with `tikz-cd` loaded, and through
+dvips and Ghostscript (`-dSAFER`, `pngalpha`) rather than dvipng, which
+misplaces TikZ's text. The depth comes from the box TeX measured, so the
+diagram's baseline sits on the text baseline as a formula's does. It needs
+`texFallback` on, `latex`, `dvips`, `gs` and the `tikz-cd` package; without
+them it fails and says which is missing.
+
+## tikz blocks
+
+A closed ```` ```tikz ```` block (at the top level of a reply or in a list
+item) is drawn as a picture, centred like a display formula.
+
+- Its body is a whole `tikzpicture` environment, or the inside of one
+  (then wrapped in one). A pasted standalone document's `\documentclass`
+  and `document` environment are dropped.
+- Lines at its top may be `\usetikzlibrary{...}` (or
+  `\usepgfplotslibrary`) and `\usepackage{...}` for `pgfplots`,
+  `circuitikz`, `tikz-3dplot` (and `tikz`, `xcolor`) or a package in the
+  user's `packages`. Any other `\usepackage`, or one further down, fails
+  the block with that reason.
+- It is drawn through dvips and Ghostscript in the terminal's text colour
+  (`black` is redefined to it, as a dark terminal would hide black) on a
+  transparent background, scaled down to the reply's width and to at most
+  80 rows; smaller than a quarter of its size, it is too large.
+- Without `latex`, `dvips` or `gs`, with `texFallback` off, or when TeX
+  refuses it, the block shows as its source with one dim line saying why,
+  as a mermaid block that cannot be drawn does. It is also shown as source
+  while TeX draws it (about half a second, once: pictures are cached).
+- The request protocol asks for it with an item `{"latex": body, "kind":
+  "tikz"}`; items without `kind` are formulas, as before.
+
+## Isolation
+
+The LaTeX comes from model output, and TikZ is a programming language, so
+TeX runs are made safe by isolation rather than by filtering commands (the
+previous backend's command and tikz-cd option filters are gone). Every
+latex, dvipng, dvips, gs and kpsewhich run:
+
+- runs in a fresh private folder (mode 0700) under the system's temporary
+  folder, deleted afterwards, as its own process group;
+- has `openin_any=p` and `openout_any=p`: TeX may not read or write files
+  by absolute path, in a parent folder or starting with a dot, so
+  `\openin` or `\input` of `/etc/hostname` finds nothing and `\openout`
+  outside the folder is refused; `TEXINPUTS` and the like are unset;
+- runs latex with `-no-shell-escape -interaction=nonstopmode
+  -halt-on-error`, dvips with `-R2` (no shell, no absolute paths) and
+  Ghostscript with `-dSAFER`;
+- is killed, with anything it started, after a wall-clock limit (6 s for
+  a formula's latex, 20 s for a TikZ picture's, 10 s for the other tools),
+  and has a CPU time limit just above it;
+- has a 1 GiB address space limit (`RLIMIT_AS`) and a 16 MiB limit on any
+  file it writes (`RLIMIT_FSIZE`), set in the child before it starts, and
+  is killed when its folder grows past 64 MiB;
+- hands back at most 4 MiB of log, and a picture of at most 32 million
+  pixels, checked from the PNG header before it is decoded.
+
+The tests check that a formula reading `/etc/hostname` draws nothing of
+it and that `\def\a{\a}\a` is stopped by the time limit.
 
 ## The user's macros
 
@@ -83,8 +204,10 @@ Chinese use the glyph forms of the chosen face.
 
 ## What does not draw
 
-A formula the engine refuses shows as its Unicode stand-in, and
-`/typeset status` lists the error. From the corpora:
+A formula the engine refuses (and TeX, when installed) shows as its
+Unicode stand-in, and `/typeset status` lists the error. From the
+corpora, without TeX Live (the TeX fallback draws most package commands
+and LaTeX commands below; see "TeX fallback"):
 
 | Kind | Commands |
 |---|---|
