@@ -1,23 +1,23 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-// A 1x1 transparent PNG: what render.py's pictures stand for here.
+// A 1x1 transparent PNG: what typeset-render's pictures stand for here.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
 const HEALTHY = {
   ok: true,
-  latex: true,
-  dvipng: true,
-  pil: true,
+  version: 'typeset-render 4.0.0',
+  engine: 'ratex',
+  cjkFont: '/fonts/NotoSerifCJK-Regular.ttc#2',
   cell: { width: 19, height: 42 },
   fg: '#4c4f69',
   problems: [],
 }
 
 type Item = { latex: string; display: boolean }
-type Request = { items: Item[]; options: { fg: string; cell: string; thicken?: number; packages?: string[]; macros?: string } }
+type Request = { items: Item[]; options: { fg: string; cell: string; thicken?: number; packages?: string[]; macros?: string; cjkFont?: string } }
 type Backend = { batches: Item[][]; checks: number; detects: number; engineTexts: string[]; requests: Request[]; argv: string[][]; checkStdin: string[] }
-// What a test's render.py answers instead of the usual: a result for the
+// What a test's typeset-render answers instead of the usual: a result for the
 // call, or undefined for the usual one.
 type Respond = (request: Request) => { value: unknown } | { deny: string } | undefined | Promise<undefined>
 
@@ -27,7 +27,7 @@ function ran(stdout: string) {
   return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
 }
 
-// Stands for the host: render.py (healthy unless told), uname, the command
+// Stands for the host: typeset-render (healthy unless told), uname, the command
 // registry, settings and the store.
 function host(on: On, health: object = HEALTHY, respond?: Respond, detected: object = { cell: { width: 19, height: 42 }, fg: '#4c4f69' }): Backend {
   const backend: Backend = { batches: [], checks: 0, detects: 0, engineTexts: [], requests: [], argv: [], checkStdin: [] }
@@ -48,7 +48,6 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
 
       return ran(JSON.stringify(detected))
     }
-    if (e.argv.includes('--warm')) return ran(JSON.stringify({ daemon: null }))
     const request = JSON.parse(e.init?.stdin ?? '{}') as Request
     backend.batches.push(request.items)
     backend.requests.push(request)
@@ -197,7 +196,7 @@ describe('replies', () => {
 
   test('a backend that cannot run is told once and replies stay text', async ($, on) => {
     const clock = mock.clock(on)
-    const backend = host(on, { ok: false, latex: false, dvipng: false, pil: true, problems: ['latex not found'] })
+    const backend = host(on, { ok: false, problems: ['test formula failed: no fonts'] })
     const toasts: string[] = []
     on('ui.toast', (_, e) => {
       toasts.push(e.text)
@@ -213,7 +212,7 @@ describe('replies', () => {
     expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
     expect(await ui.find({ type: 'Text', text: /Has/ })).toBeDefined()
     expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toContain('latex not found')
+    expect(toasts[0]).toContain('no fonts')
     await ui.unmount()
   })
 })
@@ -349,11 +348,11 @@ describe('commands and prompt', () => {
     await back.unmount()
   })
 
-  test('status reports the backend', async ($, on) => {
+  test('status reports the renderer', async ($, on) => {
     host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    expect(text).toContain('backend: ready')
+    expect(text).toContain('renderer: ready')
     expect(text).toContain('19x42')
   })
 
@@ -383,15 +382,15 @@ describe('commands and prompt', () => {
 })
 
 describe('backend', () => {
-  test('runs client.py with -I -S and sends packages and macros, also to --check', { options: { packages: 'physics, siunitx;\n  mhchem', macros: '\\newcommand{\\RR}{\\mathbb{R}}' } }, async ($, on) => {
+  test('runs typeset-render and sends packages, macros and the CJK font, also to --check', { options: { packages: 'physics, siunitx;\n  mhchem', macros: '\\newcommand{\\RR}{\\mathbb{R}}', cjkFont: '/f/cjk.ttc#2' } }, async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     await clock.advance(0)
     const ui = await $.ui.mount({ ...reply('Uses $\\RR^n$.'), surface: 'terminal' })
     await clock.advance(100)
-    expect(backend.argv[0]?.slice(0, 3)).toEqual(['python3', '-I', '-S'])
-    expect(backend.argv.every(argv => argv[3]?.endsWith('/bin/client.py'))).toBe(true)
+    expect(backend.argv.every(argv => argv[0]?.endsWith('/renderer/target/release/typeset-render'))).toBe(true)
+    expect(backend.requests[0]?.options.cjkFont).toBe('/f/cjk.ttc#2')
     expect(backend.requests[0]?.options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
     expect(backend.requests[0]?.options.macros).toBe('\\newcommand{\\RR}{\\mathbb{R}}')
     expect(JSON.parse(backend.checkStdin[0] ?? '{}').options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
@@ -726,31 +725,22 @@ describe('mermaid', () => {
 })
 
 describe('status', () => {
-  test('lists daemon, format, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
-    host(on, { ...HEALTHY, daemon: { pid: 4242, uptime: 61.2, served: 7, warm: 1 }, format: { ok: true, path: '/c/fmt/x.fmt' } })
+  test('lists the renderer, CJK font, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
+    host(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    expect(text).toContain('daemon: running (pid 4242, up 61 s, 7 requests served)')
-    expect(text).toContain('format: precompiled (/c/fmt/x.fmt)')
+    expect(text).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
+    expect(text).toContain('CJK font: /fonts/NotoSerifCJK-Regular.ttc#2')
     expect(text).toContain('packages: physics; macros: 2 definitions')
     expect(text).toContain('diagrams: colour')
   })
 
-  test('no daemon, no format, or a backend that does not say', async ($, on) => {
-    host(on, { ...HEALTHY, daemon: null, format: { ok: false } })
+  test('no CJK font, no extra packages or macros', async ($, on) => {
+    host(on, { ...HEALTHY, cjkFont: null })
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    expect(text).toContain('daemon: not reached')
-    expect(text).toContain('format: not built')
+    expect(text).toContain('CJK font: none found')
     expect(text).toContain('packages: none extra; macros: 0 definitions')
-  })
-
-  test('a backend that does not say has unknown daemon and format', async ($, on) => {
-    host(on)
-    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    expect(text).toContain('daemon: unknown')
-    expect(text).toContain('format: unknown')
   })
 })
 

@@ -66,13 +66,19 @@
     "packages": {
       "type": "string",
       "title": "Extra LaTeX packages",
-      "description": "TeX Live packages to load for every formula, separated by commas or spaces (such as \"physics, tensor\"). Built into the precompiled format; trusted as you give them.",
+      "description": "TeX Live packages to load when a formula falls back to TeX, separated by commas or spaces (such as \"physics, tensor\"). Trusted as you give them.",
       "default": ""
     },
     "macros": {
       "type": "string",
       "title": "Your LaTeX macros",
-      "description": "Your own definitions (\\newcommand, \\DeclareMathOperator, ...), one or more lines, available in every formula. Built into the precompiled format; trusted as you give them.",
+      "description": "Your own definitions (\\newcommand, \\DeclareMathOperator, ...), one or more lines, available in every formula. Trusted as you give them.",
+      "default": ""
+    },
+    "cjkFont": {
+      "type": "string",
+      "title": "CJK font",
+      "description": "A font file for Chinese, Japanese and Korean text in formulas: a path, or path#index for a font collection (.ttc). Empty: the system's own, a serif face first.",
       "default": ""
     },
     "diagramColor": {
