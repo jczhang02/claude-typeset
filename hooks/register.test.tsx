@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
+import type { On, PaneOpenArgs } from 'claude-code'
 
 // A 1x1 transparent PNG: what typeset-render's pictures stand for here.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
@@ -84,6 +85,52 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
   })
 
   return backend
+}
+
+const HEADLESS = { cwd: '/', surface: null, isInteractive: false }
+
+// Stands for the engine's panes and toasts: what the mod opened, closed and
+// toasted. `placed` false answers as a surface that places no pane does.
+type Ui = { opened: PaneOpenArgs[]; closed: string[]; toasts: string[] }
+function panes(on: On, placed = true): Ui {
+  const ui: Ui = { opened: [], closed: [], toasts: [] }
+  on('ui.open', (_, e) => {
+    ui.opened.push(e)
+
+    return { value: placed ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'no-surface: a -p run' } }
+  })
+  on('ui.close', (_, e) => {
+    ui.closed.push(e.id)
+
+    return { value: undefined }
+  })
+  on('ui.toast', (_, e) => {
+    ui.toasts.push(e.text)
+
+    return { value: undefined }
+  })
+
+  return ui
+}
+
+const STATUS_PANE = {
+  plugin: 'typeset',
+  component: 'Pane' as const,
+  requestId: 'typeset-status',
+  props: { title: '/typeset status', isFocused: true, bodyColumns: 76, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+}
+
+// Runs /typeset status at a terminal, checks that it opened the pane and left
+// the transcript alone, and returns what the pane draws, a line per Text.
+async function statusPane($: Engine, ui: Ui): Promise<string[]> {
+  const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+  expect(text).toBeUndefined()
+  expect(ui.opened.at(-1)?.id).toBe('typeset-status')
+  const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
+  const lines = (await pane.findAll({ type: 'Text' })).map(found => found.text)
+  await pane.unmount()
+
+  return lines
 }
 
 const reply = (text: string, isFirstOfReply = true, requestId = 'msg-1', columns = 80) => ({
@@ -364,12 +411,97 @@ describe('commands and prompt', () => {
     await back.unmount()
   })
 
-  test('status reports the renderer', async ($, on) => {
+  test('on, off and clear answer with a toast at a terminal, and print nothing', async ($, on) => {
     host(on)
+    const ui = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    for (const args of ['off', 'on', 'clear']) {
+      const { text } = await $.command.run({ ...RUN, command: 'typeset', args })
+      expect(text).toBeUndefined()
+    }
+    expect(ui.toasts).toEqual([
+      'off: replies are drawn as the engine draws them.',
+      'on: formulas in replies are drawn as pictures.',
+      'forgot the drawn formulas; each is drawn again when it shows.',
+    ])
+    expect(ui.opened).toHaveLength(0)
+  })
+
+  test('headless, on, off and clear print their answer and toast nothing', async ($, on) => {
+    host(on)
+    const ui = panes(on)
+    await $.session.start(HEADLESS)
+    expect((await $.command.run({ ...RUN, command: 'typeset', args: 'off' })).text).toBe('off: replies are drawn as the engine draws them.')
+    expect((await $.command.run({ ...RUN, command: 'typeset', args: 'on' })).text).toBe('on: formulas in replies are drawn as pictures.')
+    expect((await $.command.run({ ...RUN, command: 'typeset', args: 'clear' })).text).toContain('forgot the drawn formulas')
+    expect(ui.toasts).toHaveLength(0)
+  })
+
+  test('status opens a pane that holds the keys and closes on Esc, and prints nothing', async ($, on) => {
+    host(on)
+    const ui = panes(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    for (const args of ['status', '']) {
+      const { text } = await $.command.run({ ...RUN, command: 'typeset', args })
+      expect(text).toBeUndefined()
+    }
+    expect(ui.opened).toHaveLength(2)
+    const opened = ui.opened[0]
+    expect(opened).toMatchObject({ id: 'typeset-status', focus: true, closeOnEscape: true, holdToasts: true })
+    // The title, a blank row, the report's lines, a blank row, the hint.
+    expect(opened?.rows).toBeGreaterThan(12)
+    expect(ui.closed).toHaveLength(0)
+    expect(ui.toasts).toHaveLength(0)
+  })
+
+  test('the status pane reads as /btw does: the command in bold, the report, a dim hint', async ($, on) => {
+    host(on)
+    const ui = panes(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
+    const texts = await pane.findAll({ type: 'Text' })
+    expect(texts[0]?.text).toBe('/typeset status')
+    expect(texts[0]?.props).toMatchObject({ bold: true, color: 'warning' })
+    expect(texts.at(-1)?.text).toBe('Esc close')
+    expect(texts.at(-1)?.props).toMatchObject({ dimColor: true })
+    const lines = texts.map(found => found.text)
+    expect(lines[1]).toBe('on (from settings)')
+    expect(lines).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
+    expect(lines.some(line => line.startsWith('cell: 19x42 px'))).toBe(true)
+    expect(lines.some(line => line.startsWith('cache: '))).toBe(true)
+    expect(lines.some(line => line.startsWith('diagrams: colour') && line.endsWith('prompt hint: on'))).toBe(true)
+    expect(ui.opened).toHaveLength(1)
+    await pane.unmount()
+  })
+
+  test('headless, status prints the report and opens no pane', async ($, on) => {
+    host(on)
+    const ui = panes(on)
+    await $.session.start(HEADLESS)
     const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toContain('renderer: ready')
     expect(text).toContain('19x42')
+    expect(ui.opened).toHaveLength(0)
+    expect(ui.toasts).toHaveLength(0)
+  })
+
+  test('a pane no surface places is closed again, and the report is printed', async ($, on) => {
+    host(on)
+    const ui = panes(on, false)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(text).toContain('renderer: ready')
+    expect(ui.opened).toHaveLength(1)
+    expect(ui.closed).toEqual(['typeset-status'])
+  })
+
+  test('a pane that fails to open leaves the report printed', async ($, on) => {
+    host(on)
+    on('ui.open', () => ({ deny: 'a ui.open hook refused it' }))
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(text).toContain('renderer: ready')
   })
 
   test('the system prompt gets the hint on a terminal', async ($, on) => {
@@ -837,6 +969,7 @@ describe('mermaid trees', () => {
   test('a flowchart the renderer says is not a tree is drawn by beautiful-mermaid, and not asked for again', async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on, HEALTHY, refusing('not a tree: it has a cycle'))
+    const panesUi = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     await clock.advance(0)
     const ui = await $.ui.mount({ ...reply(TREE_FLOW), surface: 'terminal' })
@@ -847,7 +980,8 @@ describe('mermaid trees', () => {
     await clock.advance(1000)
     expect(backend.batches).toHaveLength(1)
     // Drawn after all: not among the errors /typeset status lists.
-    const { text: status } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const status = (await statusPane($, panesUi)).join('\n')
+    expect(status).toContain('cache: ')
     expect(status).not.toContain('not a tree')
     await ui.unmount()
   })
@@ -995,33 +1129,38 @@ describe('tikz', () => {
 describe('status', () => {
   test('lists the renderer, CJK font, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
     host(on)
+    const ui = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const text = (await statusPane($, ui)).join('\n')
     expect(text).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
     expect(text).toContain('CJK font: /fonts/NotoSerifCJK-Regular.ttc#2')
     expect(text).toContain('packages: physics; macros: 2 definitions')
     expect(text).toContain('diagrams: colour')
+    expect(text).toContain('prompt hint: on')
     expect(text).toContain('TeX fallback: on (found latex, dvipng, dvips, gs, tikz-cd)')
   })
 
   test('the TeX line says what is missing, or that the fallback is off', async ($, on) => {
     host(on, { ...HEALTHY, tex: { latex: false, dvipng: false, dvips: false, gs: true, tikzCd: false, works: null } })
+    const ui = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const text = (await statusPane($, ui)).join('\n')
     expect(text).toContain('TeX fallback: not available (missing latex, dvipng, dvips, tikz-cd')
   })
 
   test('texFallback off: the TeX line says so', { options: { texFallback: false } }, async ($, on) => {
     host(on)
+    const ui = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const text = (await statusPane($, ui)).join('\n')
     expect(text).toContain('TeX fallback: off (texFallback)')
   })
 
   test('no CJK font, no extra packages or macros', async ($, on) => {
     host(on, { ...HEALTHY, cjkFont: null })
+    const ui = panes(on)
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const text = (await statusPane($, ui)).join('\n')
     expect(text).toContain('CJK font: none found')
     expect(text).toContain('packages: none extra; macros: 0 definitions')
   })
