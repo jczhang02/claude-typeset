@@ -31,7 +31,11 @@ export type Block =
   // A closed ```mermaid fence at the top level or in a list item: `source`
   // is its body, without the fences and the fence's own indentation.
   | { kind: 'mermaid'; source: string; indent: number; gapBefore?: boolean }
-export type MathRef = { latex: string; display: boolean }
+  // A closed ```tikz fence, found as a mermaid one is: a TikZ picture the
+  // renderer draws with TeX.
+  | { kind: 'tikz'; source: string; indent: number; gapBefore?: boolean }
+// `kind: 'tikz'`: a ```tikz block's body, drawn as a picture of its own.
+export type MathRef = { latex: string; display: boolean; kind?: 'tikz' }
 export type Run =
   | { kind: 'text'; text: string; style: Style; marginTop: number }
   | { kind: 'image'; picture: Picture; latex: string; marginTop: number }
@@ -2158,19 +2162,25 @@ function nodeHasMath(node: Node, lines: string[]): boolean {
   }
 }
 
-// The info string of a fence that draws as a diagram: 'mermaid', any case,
+type FencedKind = 'mermaid' | 'tikz'
+type Fenced = { kind: FencedKind; source: string }
+
+// The info string of a fence this mod draws: 'mermaid' or 'tikz', any case,
 // words after it ignored (as hooks/mermaid.ts's isMermaidInfo reads it).
-function isDiagramInfo(info: string): boolean {
-  return /^mermaid(?:\s|$)/i.test(info.trim())
+function fencedKind(info: string): FencedKind | null {
+  const found = /^(mermaid|tikz)(?:\s|$)/i.exec(info.trim())
+
+  return found ? ((found[1] as string).toLowerCase() as FencedKind) : null
 }
 
-/** A closed mermaid fence's body (the fence's indentation taken off its lines), or null. */
-function diagramSource(lines: string[], node: Node): string | null {
+/** A closed mermaid or tikz fence: its kind and body (the fence's indentation taken off its lines), or null. */
+function diagramSource(lines: string[], node: Node): Fenced | null {
   if (node.type !== 'fence' || node.end - node.start < 2) {
     return null
   }
   const open = FENCE.exec(lines[node.start] as string)
-  if (!open || !isDiagramInfo(open[3] as string)) {
+  const kind = open ? fencedKind(open[3] as string) : null
+  if (!open || kind === null) {
     return null
   }
   const fence = open[2] as string
@@ -2179,11 +2189,12 @@ function diagramSource(lines: string[], node: Node): string | null {
     return null
   }
   const indent = (open[1] as string).length
-
-  return lines
+  const source = lines
     .slice(node.start + 1, node.end - 1)
     .map(line => stripColumns(line, Math.min(indent, indentOf(line)))[1])
     .join('\n')
+
+  return { kind, source }
 }
 
 function nodeHasDiagram(node: Node, lines: string[]): boolean {
@@ -2197,17 +2208,18 @@ function nodeHasDiagram(node: Node, lines: string[]): boolean {
   return false
 }
 
-// A fence line that opens a mermaid block (the scanner decides whether it
-// does). Anchored to a line start: unanchored, a long run of backticks made
-// every position a start, and the test took time growing with its square.
-const DIAGRAM_HINT = /^[ \t>*+\-\d.)]*(?:`{3,}|~{3,})[ \t]*mermaid/im
+// A fence line that opens a mermaid or tikz block (the scanner decides
+// whether it does). Anchored to a line start: unanchored, a long run of
+// backticks made every position a start, and the test took time growing
+// with its square.
+const DIAGRAM_HINT = /^[ \t>*+\-\d.)]*(?:`{3,}|~{3,})[ \t]*(?:mermaid|tikz)/im
 
-/** Can the markdown hold a mermaid fence at all? A scan, no parse. */
+/** Can the markdown hold a mermaid or tikz fence at all? A scan, no parse. */
 function mayHaveDiagram(markdown: string): boolean {
-  return /mermaid/i.test(markdown) && DIAGRAM_HINT.test(markdown)
+  return /mermaid|tikz/i.test(markdown) && DIAGRAM_HINT.test(markdown)
 }
 
-/** True if the markdown holds a mermaid fence this mod draws (top level or in a list item). */
+/** True if the markdown holds a mermaid or tikz fence this mod draws (top level or in a list item). */
 export function hasDiagram(markdown: string): boolean {
   if (!mayHaveDiagram(markdown)) {
     return false
@@ -2678,7 +2690,8 @@ function emitList(list: Extract<Node, { type: 'list' }>, indent: number, depth: 
         emitList(child, hang, depth + 1, emit)
       } else if (diagramSource(item.inner, child) !== null) {
         markerOnly()
-        push(emit, { kind: 'mermaid', source: diagramSource(item.inner, child) as string, indent: hang })
+        const { kind, source } = diagramSource(item.inner, child) as Fenced
+        push(emit, { kind, source, indent: hang })
       } else if (child.type === 'math') {
         const latex = mathBlockLatex(item.inner, child)
         if (latex === '') {
@@ -2817,7 +2830,7 @@ function emitBlocks(lines: string[], nodes: Node[]): Block[] {
     emit.gap = sawBlank
     sawBlank = false
     if (diagram !== null) {
-      push(emit, { kind: 'mermaid', source: diagram, indent: 0 })
+      push(emit, { kind: diagram.kind, source: diagram.source, indent: 0 })
     } else if (node.type === 'math') {
       const latex = mathBlockLatex(lines, node)
       if (latex === '') {
@@ -2835,20 +2848,22 @@ function emitBlocks(lines: string[], nodes: Node[]): Block[] {
   return mergeMarkdown(emit.blocks)
 }
 
-/** Every formula that needs a picture, once each. */
+/** Every formula (and tikz block) that needs a picture, once each. */
 export function mathRefs(blocks: Block[]): MathRef[] {
   const seen = new Set<string>()
   const out: MathRef[] = []
-  const add = (latex: string, display: boolean) => {
-    const key = `${display ? 'D' : 'I'}${latex}`
+  const add = (latex: string, display: boolean, isTikz = false) => {
+    const key = `${isTikz ? 'T' : display ? 'D' : 'I'}${latex}`
     if (!seen.has(key)) {
       seen.add(key)
-      out.push({ latex, display })
+      out.push(isTikz ? { latex, display, kind: 'tikz' } : { latex, display })
     }
   }
   for (const block of blocks) {
     if (block.kind === 'display') {
       add(block.latex, true)
+    } else if (block.kind === 'tikz') {
+      add(block.source, true, true)
     } else if (block.kind === 'paragraph') {
       for (const inline of block.inlines) {
         if (inline.kind === 'math') {

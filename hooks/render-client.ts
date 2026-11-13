@@ -17,6 +17,10 @@ import type { MathRef, Picture, PictureState } from './layout'
 // few backend calls and not one per formula, and `flush` sends them at once
 // when their block has ended (its draw comes next).
 //
+// A ```tikz block goes the same way, as a ref of kind 'tikz': asked for at
+// the width it is drawn in (a TeX run takes far longer than a formula), and
+// sent in a call of its own, so formulas never wait for it.
+//
 // The engine allows `$` only as `$.noun.event(...)` at a call site and as an
 // argument to a function like these, never kept in a variable, so the worker
 // holds the session's `$` as its own parameter for the life of the module.
@@ -34,13 +38,19 @@ export type Settings = {
   macros: string // the user's own definitions, for every engine
   cjkFont: string // a font file for CJK text ('' finds one)
   diagramColor: boolean
+  texFallback: boolean // formulas RaTeX refuses go to TeX Live, when installed
 }
+
+// The TeX tools typeset-render --check found.
+export type TexTools = { latex: boolean; dvipng: boolean; dvips: boolean; gs: boolean; tikzCd: boolean; works?: boolean | null }
 
 export type Health = {
   ok: boolean
   version?: string
   engine?: string
   cjkFont?: string | null
+  texFallback?: boolean
+  tex?: TexTools
   cell?: { width: number; height: number }
   fg?: string
   problems: string[]
@@ -80,6 +90,7 @@ export const DEFAULTS: Settings = {
   macros: '',
   cjkFont: '',
   diagramColor: true,
+  texFallback: true,
 }
 
 const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
@@ -188,13 +199,17 @@ export function readSettings(options: PluginOptions): Settings {
     macros: macros.length <= MAX_MACROS ? macros : '',
     cjkFont: typeof options.cjkFont === 'string' ? options.cjkFont.trim().slice(0, 4096) : '',
     diagramColor: options.diagramColor !== false,
+    texFallback: options.texFallback !== false,
   }
 }
 
 /** Takes the settings the module loaded with. */
 export function configure(next: Settings, options: PluginOptions = {}) {
   settings = next
-  setupKey = next.packages.length > 0 || next.macros !== '' || next.cjkFont !== '' ? hash(JSON.stringify([next.packages, next.macros, next.cjkFont])) : ''
+  setupKey =
+    next.packages.length > 0 || next.macros !== '' || next.cjkFont !== '' || !next.texFallback
+      ? hash(JSON.stringify([next.packages, next.macros, next.cjkFont, next.texFallback]))
+      : ''
   const entries = Number(options.cacheEntries)
   cacheLimits.entries = Number.isInteger(entries) && entries >= 2 ? entries : CACHE_LIMIT
 }
@@ -266,7 +281,7 @@ export function noteDiagram() {
 }
 
 function keyOf(ref: MathRef, maxColumns: number): string {
-  return `${optionsKey()}|${maxColumns}|${ref.display ? 'D' : 'I'}|${ref.latex}`
+  return `${optionsKey()}|${maxColumns}|${ref.kind === 'tikz' ? 'T' : ref.display ? 'D' : 'I'}|${ref.latex}`
 }
 
 function sizeOf(result: Result): number {
@@ -367,10 +382,15 @@ export function lookup(ref: MathRef, width: number, site?: string): PictureState
 
     return downFailure
   }
+  if (ref.kind === 'tikz') {
+    const room = columnsFor(width)
+
+    return hit(keyOf(ref, room)) ?? ask(ref, room, site)
+  }
   const base = hit(keyOf(ref, MAX_COLUMNS))
   if (base === undefined) return ask(ref, MAX_COLUMNS, site)
   if ('error' in base || base.columns <= width) return base
-  const fit = Math.max(1, Math.min(MAX_COLUMNS, Math.floor(width)))
+  const fit = columnsFor(width)
   const narrow = hit(keyOf(ref, fit))
   if (narrow === undefined) return ask(ref, fit, site)
 
@@ -384,6 +404,11 @@ export function lookup(ref: MathRef, width: number, site?: string): PictureState
  */
 export function prefetch(ref: MathRef, width: number) {
   if (backendDown !== undefined) return
+  if (ref.kind === 'tikz') {
+    if (!cache.has(keyOf(ref, columnsFor(width)))) enqueue(ref, columnsFor(width), false)
+
+    return
+  }
   const base = cache.get(keyOf(ref, MAX_COLUMNS))
   if (base === undefined) {
     enqueue(ref, MAX_COLUMNS, false)
@@ -391,7 +416,7 @@ export function prefetch(ref: MathRef, width: number) {
     return
   }
   if ('error' in base || base.columns <= width) return
-  const fit = Math.max(1, Math.min(MAX_COLUMNS, Math.floor(width)))
+  const fit = columnsFor(width)
   if (!cache.has(keyOf(ref, fit))) enqueue(ref, fit, false)
 }
 
@@ -405,13 +430,20 @@ export function flush() {
   else isUrgent = true
 }
 
+/** The columns a picture may take in `width` columns of room. */
+function columnsFor(width: number): number {
+  return Math.max(1, Math.min(MAX_COLUMNS, Math.floor(width)))
+}
+
 function takeBatch(): Job[] {
   isUrgent = false // what was queued when flush() came goes now
   const batch: Job[] = []
-  // What a draw waits for first, then prefetches.
+  // What a draw waits for first, then prefetches; a tikz block alone.
   const jobs = [...queue.values()].sort((a, b) => Number(b.eager) - Number(a.eager))
+  const isTikz = (job: Job) => job.ref.kind === 'tikz'
   for (const job of jobs) {
-    if (batch.length === 0 || (job.maxColumns === batch[0]?.maxColumns && batch.length < BATCH_ITEMS)) {
+    const first = batch[0]
+    if (first === undefined || (!isTikz(first) && !isTikz(job) && job.maxColumns === first.maxColumns && batch.length < BATCH_ITEMS)) {
       batch.push(job)
     }
   }
@@ -449,15 +481,15 @@ function backend($: EngineInterface, ...flags: string[]): string[] {
   return [`${$.plugin.root}/renderer/target/release/typeset-render`, ...flags]
 }
 
-/** What every request carries besides its items: the user's packages, macros and CJK font. */
-function setupOptions(): { packages: string[]; macros: string; cjkFont: string } {
-  return { packages: settings.packages, macros: settings.macros, cjkFont: settings.cjkFont }
+/** What every request carries besides its items: the user's packages, macros, CJK font and the TeX fallback switch. */
+function setupOptions(): { packages: string[]; macros: string; cjkFont: string; texFallback: boolean } {
+  return { packages: settings.packages, macros: settings.macros, cjkFont: settings.cjkFont, texFallback: settings.texFallback }
 }
 
 /** One backend call for `batch`. */
 async function callRender($: EngineInterface, batch: Job[]): Promise<Outcome> {
   const request = {
-    items: batch.map(job => ({ latex: job.ref.latex, display: job.ref.display })),
+    items: batch.map(job => (job.ref.kind === 'tikz' ? { latex: job.ref.latex, display: true, kind: 'tikz' } : { latex: job.ref.latex, display: job.ref.display })),
     options: {
       // The resolved values when known, so each call draws for the key it is
       // filed under and the backend skips its own lookup.

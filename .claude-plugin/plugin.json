@@ -60,13 +60,19 @@
     "promptHint": {
       "type": "boolean",
       "title": "Tell Claude about it",
-      "description": "Add a short note to the system prompt: write math as $...$ and $$...$$, never in code blocks; mermaid blocks draw as diagrams.",
+      "description": "Add a short note to the system prompt: write math as $...$ and $$...$$, never in code blocks; mermaid blocks draw as diagrams, tikz blocks as pictures.",
+      "default": true
+    },
+    "texFallback": {
+      "type": "boolean",
+      "title": "TeX fallback",
+      "description": "When the built-in engine cannot typeset a formula (a package command such as \\SI or \\dv), typeset it with TeX Live, if latex and dvipng are installed. Also needed for tikz-cd and tikz blocks (with dvips and Ghostscript).",
       "default": true
     },
     "packages": {
       "type": "string",
       "title": "Extra LaTeX packages",
-      "description": "TeX Live packages to load when a formula falls back to TeX, separated by commas or spaces (such as \"physics, tensor\"). Trusted as you give them.",
+      "description": "TeX Live packages to load when a formula falls back to TeX, separated by commas or spaces (such as \"physics, tensor\"); a tikz block may load them too. Trusted as you give them.",
       "default": ""
     },
     "macros": {
