@@ -8,21 +8,24 @@
 //!
 //! See protocol.rs for the request and the answer.
 
+mod cache;
 mod detect;
 mod fit;
 mod fonts;
 mod normalize;
 mod protocol;
 mod ratex;
+mod sandbox;
+mod tex;
 
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
 
-use protocol::{Answer, ItemResult, MAX_LATEX, Options};
+use protocol::{Answer, ItemResult, Kind, MAX_LATEX, MAX_TIKZ, Options};
 
-const VERSION: &str = concat!("typeset-render ", env!("CARGO_PKG_VERSION"));
+pub const VERSION: &str = concat!("typeset-render ", env!("CARGO_PKG_VERSION"));
 
 fn read_stdin() -> Value {
     let mut input = String::new();
@@ -32,29 +35,76 @@ fn read_stdin() -> Value {
     serde_json::from_str(&input).unwrap_or(Value::Null)
 }
 
-/// One formula, start to end; a panic in the engine fails this item alone.
-fn render_item(
+/// One formula through RaTeX: its picture, or (Err) why RaTeX could not
+/// typeset it, which the TeX fallback may still. A panic in the engine
+/// fails this formula alone.
+fn ratex_item(
     latex: &str,
     display: bool,
     cfg: &Options,
     macros: &str,
     fg: [f32; 3],
     cell: protocol::Cell,
-) -> ItemResult {
-    if latex.chars().count() > MAX_LATEX {
-        return ItemResult::failure(format!("formula longer than {MAX_LATEX} characters"));
-    }
-    let latex = normalize::normalize(latex, display);
-    if latex.trim().is_empty() {
-        return ItemResult::failure("empty formula");
-    }
+) -> Result<ItemResult, String> {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        match ratex::typeset(&latex, display, fg, cfg.pt_px, macros) {
-            Ok(ink) => fit::fit(&ink, display, cfg, cell),
-            Err(error) => ItemResult::failure(error),
-        }
+        ratex::typeset(latex, display, fg, cfg.pt_px, macros)
     }));
-    outcome.unwrap_or_else(|_| ItemResult::failure("renderer failed on this formula"))
+    match outcome {
+        Ok(Ok(ink)) => Ok(fit::fit(&ink, display, cfg, cell).by("ratex")),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("renderer failed on this formula".into()),
+    }
+}
+
+/// What becomes of one item: a result now, or a job for TeX.
+enum Plan {
+    Done(ItemResult),
+    Tex(tex::Job),
+}
+
+fn plan_item(
+    item: &protocol::Item,
+    cfg: &Options,
+    macros: &str,
+    fg: [f32; 3],
+    cell: protocol::Cell,
+    tex: &tex::Tex,
+) -> Plan {
+    if item.kind == Kind::Tikz {
+        if item.latex.chars().count() > MAX_TIKZ {
+            return Plan::Done(ItemResult::failure(format!(
+                "tikz block longer than {MAX_TIKZ} characters"
+            )));
+        }
+        return Plan::Tex(tex::Job::Tikz {
+            source: item.latex.clone(),
+        });
+    }
+    if item.latex.chars().count() > MAX_LATEX {
+        return Plan::Done(ItemResult::failure(format!(
+            "formula longer than {MAX_LATEX} characters"
+        )));
+    }
+    let latex = normalize::normalize(&item.latex, item.display);
+    if latex.trim().is_empty() {
+        return Plan::Done(ItemResult::failure("empty formula"));
+    }
+    if tex::is_diagram(&latex) {
+        // RaTeX cannot draw tikz-cd: straight to TeX.
+        return Plan::Tex(tex::Job::Diagram {
+            latex,
+            display: item.display,
+        });
+    }
+    match ratex_item(&latex, item.display, cfg, macros, fg, cell) {
+        Ok(result) => Plan::Done(result),
+        Err(error) if tex.falls_back() => Plan::Tex(tex::Job::Formula {
+            latex,
+            display: item.display,
+            ratex_error: error,
+        }),
+        Err(error) => Plan::Done(ItemResult::failure(error)),
+    }
 }
 
 fn render(request: &Value) -> Value {
@@ -70,12 +120,35 @@ fn render(request: &Value) -> Value {
         fonts::install(&cfg.cjk_font);
     }
     let macros = ratex::user_macros(&cfg.macros);
-    let results = items
+    let tex = tex::Tex::new(&cfg, cell, &fg);
+    let plans: Vec<Plan> = items
         .iter()
-        .map(|item| render_item(&item.latex, item.display, &cfg, &macros, colour, cell))
+        .map(|item| plan_item(item, &cfg, &macros, colour, cell, &tex))
+        .collect();
+    let jobs: Vec<tex::Job> = plans
+        .iter()
+        .filter_map(|plan| match plan {
+            Plan::Tex(job) => Some(job.clone()),
+            Plan::Done(_) => None,
+        })
+        .collect();
+    let mut typeset = tex.run_all(&jobs).into_iter();
+    let results = plans
+        .into_iter()
+        .map(|plan| match plan {
+            Plan::Done(result) => result,
+            Plan::Tex(_) => typeset
+                .next()
+                .unwrap_or_else(|| ItemResult::failure("renderer failed on this formula")),
+        })
         .collect();
 
     serde_json::to_value(Answer { cell, fg, results }).unwrap_or(Value::Null)
+}
+
+/// One formula through RaTeX alone, for the checks.
+fn probe(latex: &str, cfg: &Options, macros: &str, fg: [f32; 3], cell: protocol::Cell) -> ItemResult {
+    ratex_item(&normalize::normalize(latex, false), false, cfg, macros, fg, cell).unwrap_or_else(ItemResult::failure)
 }
 
 fn check(request: &Value) -> Value {
@@ -87,21 +160,26 @@ fn check(request: &Value) -> Value {
     if !cfg.cjk_font.is_empty() && font.as_deref() != Some(cfg.cjk_font.as_str()) {
         problems.push(format!("cjkFont {} is not a font file", cfg.cjk_font));
     }
-    let probe = render_item(r"\frac{a}{b}", false, &cfg, "", detect::rgb(&fg), cell);
-    let ok = matches!(probe, ItemResult::Picture { .. });
-    if let ItemResult::Failure { error } = &probe {
+    let test = probe(r"\frac{a}{b}", &cfg, "", detect::rgb(&fg), cell);
+    let ok = matches!(test, ItemResult::Picture { .. });
+    if let ItemResult::Failure { error } = &test {
         problems.push(format!("test formula failed: {error}"));
     }
     if ok && !cfg.macros.is_empty() {
         let macros = ratex::user_macros(&cfg.macros);
-        if let ItemResult::Failure { error } = render_item("x", false, &cfg, &macros, detect::rgb(&fg), cell) {
+        if let ItemResult::Failure { error } = probe("x", &cfg, &macros, detect::rgb(&fg), cell) {
             problems.push(format!("macros: {error}"));
         }
     }
+    // TeX's problems are notes: formulas draw without it.
+    let (tex, notes) = tex::health(&cfg, cell, &fg);
+    problems.extend(notes);
     json!({
         "ok": ok,
         "version": VERSION,
         "engine": "ratex",
+        "texFallback": cfg.tex_fallback,
+        "tex": tex,
         "cjkFont": font,
         "cell": cell,
         "fg": fg,

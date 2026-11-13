@@ -1,22 +1,30 @@
 //! The request the hooks send on stdin and the answer printed on stdout.
 //!
 //! Request:
-//!     {"items": [{"latex": str, "display": bool}, ...],
+//!     {"items": [{"latex": str, "display": bool, "kind": "tikz"?}, ...],
 //!      "options": {"fg": "auto" | "#rrggbb", "cell": "auto" | "WxH",
 //!                  "baseline": 0.773, "ptPx": 3.4, "minShrink": 0.8,
 //!                  "thicken": 1.8, "maxColumns": 255, "cjkFont": str,
-//!                  "packages": [str, ...], "macros": str}}
+//!                  "packages": [str, ...], "macros": str,
+//!                  "texFallback": true}}
+//!
+//! An item with "kind": "tikz" is the body of a ```tikz block (a whole
+//! tikzpicture or its inside), drawn as a picture of at most 80 rows;
+//! without "kind" it is a formula, as before.
 //!
 //! Answer (results in item order; the exit status is 0 even when items fail):
 //!     {"cell": {"width", "height"}, "fg": "#rrggbb",
-//!      "results": [{"png", "columns", "rows", "textRow"} | {"error"}, ...]}
+//!      "results": [{"png", "columns", "rows", "textRow", "engine"} | {"error"}, ...]}
+//!
+//! "engine" says who typeset a picture: "ratex", or "tex" for the TeX fallback.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const MAX_BOX: u32 = 255; // columns and rows of an Image element
 pub const MIN_SCALE: f64 = 0.25; // smaller than this and a formula is "too large"
 pub const MAX_LATEX: usize = 4000;
+pub const MAX_TIKZ: usize = 16000; // characters of a ```tikz block (a pgfplots table is long)
 const MAX_USER_PACKAGES: usize = 64;
 const MAX_MACROS: usize = 64 * 1024;
 
@@ -30,17 +38,23 @@ pub struct Options {
     pub thicken: f64,
     pub max_columns: u32,
     pub cjk_font: String,
-    #[allow(dead_code)] // for the TeX fallback
     pub packages: Vec<String>,
-    #[allow(dead_code)] // for the TeX fallback
     pub bad_packages: Vec<String>,
     pub macros: String,
+    pub tex_fallback: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Formula,
+    Tikz,
 }
 
 #[derive(Debug, Clone)]
 pub struct Item {
     pub latex: String,
     pub display: bool,
+    pub kind: Kind,
 }
 
 fn number(raw: &Value, name: &str, default: f64, low: f64, high: f64) -> f64 {
@@ -95,6 +109,7 @@ pub fn parse_options(raw: &Value) -> Options {
         packages,
         bad_packages,
         macros,
+        tex_fallback: raw.get("texFallback").and_then(Value::as_bool).unwrap_or(true),
     }
 }
 
@@ -107,17 +122,21 @@ pub fn parse_items(raw: &Value) -> Vec<Item> {
         .map(|item| Item {
             latex: item.get("latex").and_then(Value::as_str).unwrap_or("").to_string(),
             display: item.get("display").and_then(Value::as_bool).unwrap_or(false),
+            kind: match item.get("kind").and_then(Value::as_str) {
+                Some("tikz") => Kind::Tikz,
+                _ => Kind::Formula,
+            },
         })
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Cell {
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ItemResult {
     Picture {
@@ -126,6 +145,8 @@ pub enum ItemResult {
         rows: u32,
         #[serde(rename = "textRow")]
         text_row: u32,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        engine: String,
     },
     Failure {
         error: String,
@@ -135,6 +156,14 @@ pub enum ItemResult {
 impl ItemResult {
     pub fn failure(error: impl Into<String>) -> Self {
         ItemResult::Failure { error: error.into() }
+    }
+
+    /// The picture marked as typeset by `name`; a failure as it is.
+    pub fn by(mut self, name: &str) -> Self {
+        if let ItemResult::Picture { engine, .. } = &mut self {
+            *engine = name.to_string();
+        }
+        self
     }
 }
 
