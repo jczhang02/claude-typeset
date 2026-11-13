@@ -27,6 +27,7 @@ type Setup = {
   checksums?: string // renderer/checksums.json, undefined for none
   files?: Record<string, string> // path (a leading '/renderer' is under the plugin) to what it holds
   download?: () => string | undefined // what curl fetches; undefined fails as a 404
+  gate?: () => Promise<void> // what curl waits for before it ends (a slow download)
   env?: Record<string, string>
 }
 
@@ -79,6 +80,7 @@ function host(on: On, setup: Setup): World {
         return ran('')
       case 'curl': {
         world.downloads += 1
+        await setup.gate?.()
         const body = setup.download?.()
         if (body === undefined) return ran('', 22, 'curl: (22) The requested URL returned error: 404')
         world.files.set(args[args.indexOf('-o') + 1] ?? '', body)
@@ -138,6 +140,7 @@ const reply = (text: string) => ({
 })
 
 const START = { cwd: '/', surface: 'terminal' as const, isInteractive: true }
+const RUN = { origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 80 } }
 
 const commands = (world: World, command: string) => world.argv.filter(argv => argv[0] === command)
 
@@ -287,5 +290,36 @@ describe('finding typeset-render', () => {
     expect(await ui.findAll({ type: 'Image' })).toHaveLength(1)
     expect(world.toasts).toHaveLength(1)
     await ui.unmount()
+  })
+
+  test('/typeset status during a download waits for it rather than starting another', async ($, on) => {
+    const clock = mock.clock(on)
+    let online = false
+    let open = () => {}
+    const opened = new Promise<void>(resolve => {
+      open = resolve
+    })
+    const world = host(on, {
+      checksums: sums(GOOD),
+      download: () => (online ? 'good' : undefined),
+      gate: () => (online ? opened : Promise.resolve()),
+    })
+    await $.session.start(START)
+    await clock.advance(0)
+    expect(world.downloads).toBe(1)
+    expect(world.toasts[0]).toContain('could not download')
+
+    // The minute's health check starts a download, which is still running
+    // when the status command checks health too.
+    online = true
+    await clock.advance(65_000)
+    expect(world.downloads).toBe(2)
+    const status = $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    await clock.advance(0)
+    open()
+    await status
+    await clock.advance(0)
+    expect(world.downloads).toBe(2)
+    expect(world.files.get(CACHED)).toBe('good')
   })
 })
