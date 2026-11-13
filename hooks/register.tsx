@@ -8,8 +8,8 @@ import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetc
 import type { Health, Settings } from './render-client'
 
 // typeset: draws the LaTeX in Claude's replies as typeset pictures, inline
-// with the terminal text and on its baseline, and ```mermaid blocks as
-// Unicode diagrams. Blocks without either go to the surface's own Markdown
+// with the terminal text and on its baseline, ```mermaid blocks as Unicode
+// diagrams, and ```tikz blocks as pictures (TeX Live drawing them). Blocks without either go to the surface's own Markdown
 // element; paragraphs with formulas are wrapped here, line by line
 // (layout.ts), since a picture is a box of whole cells that no Text flows
 // around. Pictures come from the renderer (typeset-render, the Rust program
@@ -75,7 +75,7 @@ const SCAN_TRIGGER = /\$|\\[)\]]|```|~~~/
 const PROMPT_HINT = [
   '# Math and diagrams in replies',
   'This terminal typesets LaTeX: write $...$ inline (no space just inside the $) and $$...$$ on lines of their own for display.',
-  'It also draws ```mermaid blocks (flowchart, sequence, state, class, ER) as diagrams.',
+  'It also draws ```mermaid blocks (flowchart, sequence, state, class, ER) as diagrams, and a ```tikz block (one tikzpicture) as a picture.',
   'Never put math in code spans or code blocks.',
 ].join('\n')
 
@@ -244,11 +244,25 @@ function drawDisplay(t: Table, block: Extract<Block, { kind: 'display' }>, state
 }
 
 /** A fenced block as the engine would have drawn it: a fence longer than any backtick run inside. */
-function fenced(source: string): string {
+function fenced(source: string, info: string): string {
   const longest = Math.max(2, ...(source.match(/`+/g) ?? []).map(run => run.length))
   const fence = '`'.repeat(longest + 1)
 
-  return `${fence}mermaid\n${source}\n${fence}`
+  return `${fence}${info}\n${source}\n${fence}`
+}
+
+/** A block that cannot be drawn: its source as the engine draws a code block, and one dim line saying why. */
+function shownAsSource(t: Table, info: string, source: string, why: string): RenderElement {
+  const { Box, Text, Markdown } = t
+
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      <Markdown text={fenced(source, info)} />
+      <Text dimColor wrap="truncate">
+        {why.replace(/\s+/g, ' ').slice(0, 240)}
+      </Text>
+    </Box>
+  )
 }
 
 function segmentColor(role: DiagramRole): { color?: string; dimColor?: boolean } {
@@ -273,7 +287,7 @@ function drawSegment(t: Table, segment: DiagramSegment): RenderElement {
  * engine draws a code block and one dim line saying why.
  */
 function drawDiagram(t: Table, block: Extract<Block, { kind: 'mermaid' }>, width: number): RenderElement {
-  const { Box, Text, Markdown } = t
+  const { Box, Text } = t
   const indent = Math.min(block.indent, width - 1)
   const room = Math.max(1, width - indent)
   noteDiagram()
@@ -295,12 +309,42 @@ function drawDiagram(t: Table, block: Extract<Block, { kind: 'mermaid' }>, width
         ))}
       </Box>
     ) : (
-      <Box flexDirection="column" flexShrink={0}>
-        <Markdown text={fenced(block.source)} />
-        <Text dimColor wrap="truncate">
-          {`mermaid diagram shown as source: ${(reason ?? 'not drawn').replace(/\s+/g, ' ').slice(0, 200)}`}
-        </Text>
+      shownAsSource(t, 'mermaid', block.source, `mermaid diagram shown as source: ${(reason ?? 'not drawn').slice(0, 200)}`)
+    )
+
+  return indent > 0 ? (
+    <Box marginLeft={indent} width={room} flexShrink={0}>
+      {body}
+    </Box>
+  ) : (
+    body
+  )
+}
+
+/** The columns a tikz block gets: after its indent. */
+function tikzRoom(block: Extract<Block, { kind: 'tikz' }>, width: number): number {
+  return Math.max(1, width - Math.min(block.indent, width - 1))
+}
+
+/**
+ * A ```tikz block: the picture TeX drew of it, centred as a display
+ * formula; its source while the picture is on its way; and where it cannot
+ * be drawn (no TeX Live, a TeX error), its source and one dim line saying
+ * why, as for a mermaid block.
+ */
+function drawTikz(t: Table, block: Extract<Block, { kind: 'tikz' }>, state: PictureState, width: number): RenderElement {
+  const { Box, Image, Markdown } = t
+  const indent = Math.min(block.indent, width - 1)
+  const room = tikzRoom(block, width)
+  const body =
+    typeof state === 'object' && 'png' in state ? (
+      <Box width={room} justifyContent="center" flexShrink={0}>
+        <Image source={{ png: state.png }} columns={state.columns} rows={state.rows} alt={state.columns >= 12 ? '[TikZ picture]' : '[TikZ]'} />
       </Box>
+    ) : state === 'pending' ? (
+      <Markdown text={fenced(block.source, 'tikz')} />
+    ) : (
+      shownAsSource(t, 'tikz', block.source, `tikz picture shown as source: ${state.error.slice(0, 200)}`)
     )
 
   return indent > 0 ? (
@@ -335,6 +379,8 @@ function drawBlocks(t: Table, blocks: Block[], picture: (ref: MathRef, width: nu
       body = drawDisplay(t, block, picture({ latex: block.latex, display: true }, displayRoom(block, width)), width)
     } else if (block.kind === 'mermaid') {
       body = drawDiagram(t, block, width)
+    } else if (block.kind === 'tikz') {
+      body = drawTikz(t, block, picture({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, width)), width)
     } else {
       // A picture on a continuation line sits after the hang: it gets the rest.
       const room = Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
@@ -397,7 +443,7 @@ const plans = new Map<string, Plan>()
 
 /** Can this text hold a formula or a diagram at all? A scan, no parse. */
 function mayDraw(text: string): boolean {
-  return /\$\S|\\[([]/.test(text) || /mermaid/i.test(text)
+  return /\$\S|\\[([]/.test(text) || /mermaid|tikz/i.test(text)
 }
 
 function makePlan(text: string): Plan {
@@ -428,6 +474,7 @@ function plan(text: string): Plan {
 function eachPicture(blocks: Block[], width: number, ask: (ref: MathRef, width: number) => void) {
   for (const block of blocks) {
     if (block.kind === 'display') ask({ latex: block.latex, display: true }, displayRoom(block, width))
+    if (block.kind === 'tikz') ask({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, width))
     if (block.kind !== 'paragraph') continue
     const room = Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
     for (const inline of block.inlines) if (inline.kind === 'math') ask({ latex: inline.latex, display: false }, room)
@@ -467,8 +514,9 @@ function drawMarkdown(t: Table, site: string, text: string, blocks: Block[], fra
 
     return state
   }
-  // Ask for every formula at once, so one batch carries them all.
-  for (const ref of mathRefs(blocks)) picture(ref, frame.width)
+  // Ask for every formula at once, so one batch carries them all. A tikz
+  // block is asked for at its own width as it is drawn (it goes alone).
+  for (const ref of mathRefs(blocks)) if (ref.kind !== 'tikz') picture(ref, frame.width)
   const tree = drawFrame(t, frame, drawBlocks(t, blocks, picture, frame.width))
   const made: Drawn = { text, frameKey: key, asked, tree, isPending: asked.some(({ state }) => state === 'pending') }
   drawn.delete(site)
@@ -500,6 +548,25 @@ function definitionCount(macros: string): number {
   return (macros.match(/\\(?:(?:re)?newcommand|providecommand|[gex]?def|let|DeclareMathOperator)(?![A-Za-z])/g) ?? []).length
 }
 
+/** One line on the TeX fallback: off, missing, or on with the tools it found. */
+function texLine(health: Health): string {
+  if (!settings.texFallback) return 'TeX fallback: off (texFallback)'
+  const tex = health.tex
+  if (tex === undefined) return 'TeX fallback: not reported'
+  const tools: [string, boolean][] = [
+    ['latex', tex.latex],
+    ['dvipng', tex.dvipng],
+    ['dvips', tex.dvips],
+    ['gs', tex.gs],
+    ['tikz-cd', tex.tikzCd],
+  ]
+  const missing = tools.filter(([, found]) => !found).map(([name]) => name)
+  if (!tex.latex || !tex.dvipng) return `TeX fallback: not available (missing ${missing.join(', ')}; install TeX Live for package commands and tikz)`
+  const found = tools.filter(([, found]) => found).map(([name]) => name)
+
+  return `TeX fallback: ${tex.works === false ? 'on, but its test failed' : 'on'} (found ${found.join(', ')}${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''})`
+}
+
 function statusText(health: Health): string {
   const now = stats()
   const cell = health.cell ? `${health.cell.width}x${health.cell.height} px` : 'unknown'
@@ -511,6 +578,7 @@ function statusText(health: Health): string {
     `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
     `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
     `CJK font: ${health.cjkFont ?? 'none found'}${settings.cjkFont ? ` (setting: ${settings.cjkFont})` : ''}`,
+    texLine(health),
     `packages: ${settings.packages.length > 0 ? settings.packages.join(', ') : 'none extra'}; macros: ${definitionCount(settings.macros)} definitions`,
     `cache: ${now.pictures} pictures, ${now.failed} failed, ${now.pending} pending, ${now.batches} render calls`,
     `diagrams: ${settings.diagramColor ? `colour (${theme() ?? 'theme not known yet'})` : 'monochrome'}`,

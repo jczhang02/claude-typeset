@@ -832,9 +832,46 @@ describe('mermaid blocks', () => {
   })
 })
 
+describe('tikz blocks', () => {
+  test('a closed tikz fence at the top level is a tikz block, and a picture to ask for', () => {
+    const text = 'Here:\n\n```tikz\n\\usetikzlibrary{arrows.meta}\n\\draw (0,0) -- (1,1);\n```\n\nDone.'
+    expect(hasDiagram(text)).toBe(true)
+    const blocks = parseMessage(text)
+    expect(blocks).toEqual([
+      { kind: 'markdown', text: 'Here:' },
+      { kind: 'tikz', source: '\\usetikzlibrary{arrows.meta}\n\\draw (0,0) -- (1,1);', indent: 0, gapBefore: true },
+      { kind: 'markdown', text: 'Done.', gapBefore: true },
+    ])
+    expect(mathRefs(blocks)).toEqual([{ latex: '\\usetikzlibrary{arrows.meta}\n\\draw (0,0) -- (1,1);', display: true, kind: 'tikz' }])
+  })
+
+  test('any case, extra words, ~~~ fences; in a list item it hangs under the text', () => {
+    expect(parseMessage('~~~ TikZ picture\n\\begin{tikzpicture}\\end{tikzpicture}\n~~~')).toEqual([
+      { kind: 'tikz', source: '\\begin{tikzpicture}\\end{tikzpicture}', indent: 0 },
+    ])
+    const blocks = parseMessage('- Draw:\n\n  ```tikz\n  \\draw (0,0);\n  ```')
+    expect(blocks.find(block => block.kind === 'tikz')).toEqual({ kind: 'tikz', source: '\\draw (0,0);', indent: 2, gapBefore: true })
+  })
+
+  test('unclosed, quoted, or another language: left to the engine', () => {
+    for (const text of ['```tikz\n\\draw (0,0);', '> ```tikz\n> \\draw (0,0);\n> ```', '```tikzpicture\n\\draw (0,0);\n```', '```latex\n\\begin{tikzpicture}\\end{tikzpicture}\n```']) {
+      expect(hasDiagram(text)).toBe(false)
+      expect(parseMessage(text)).toEqual([{ kind: 'markdown', text }])
+    }
+  })
+
+  test('a formula and a tikz block with the same text are asked for apart', () => {
+    const blocks = parseMessage('$$x$$\n\n```tikz\nx\n```')
+    expect(mathRefs(blocks)).toEqual([
+      { latex: 'x', display: true },
+      { latex: 'x', display: true, kind: 'tikz' },
+    ])
+  })
+})
+
 describe('fuzz', () => {
   test('random markdown never throws, and hasMath agrees with parseMessage', () => {
-    const alphabet = ['```mermaid\n', '```\n', 'graph TD\n', '\\newcommand{\\R}{\\mathbb{R}}', '\\def\\f#1{#1^2}', '\\R', '\\f', '#1', '$', '$$', '\\', '\\(', '\\)', '\\[', '\\]', '`', '```', '*', '_', '~~', '[', ']', '(', ')', '<', '>', '\n', '\n\n', ' ', '  ', '- ', '1. ', '# ', '|', '---', '中', '，', 'x', 'ab', '{', '}', '^', '\\frac', '\\begin{pmatrix}', '\\end{pmatrix}', '&', '\t', '    ', '😀', '\\left', '\\not']
+    const alphabet = ['```mermaid\n', '```tikz\n', '```\n', 'graph TD\n', '\\newcommand{\\R}{\\mathbb{R}}', '\\def\\f#1{#1^2}', '\\R', '\\f', '#1', '$', '$$', '\\', '\\(', '\\)', '\\[', '\\]', '`', '```', '*', '_', '~~', '[', ']', '(', ')', '<', '>', '\n', '\n\n', ' ', '  ', '- ', '1. ', '# ', '|', '---', '中', '，', 'x', 'ab', '{', '}', '^', '\\frac', '\\begin{pmatrix}', '\\end{pmatrix}', '&', '\t', '    ', '😀', '\\left', '\\not']
     let seed = 7
     const random = (n: number) => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff

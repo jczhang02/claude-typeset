@@ -9,13 +9,18 @@ const HEALTHY = {
   version: 'typeset-render 4.0.0',
   engine: 'ratex',
   cjkFont: '/fonts/NotoSerifCJK-Regular.ttc#2',
+  texFallback: true,
+  tex: { latex: true, dvipng: true, dvips: true, gs: true, tikzCd: true, works: true },
   cell: { width: 19, height: 42 },
   fg: '#4c4f69',
   problems: [],
 }
 
-type Item = { latex: string; display: boolean }
-type Request = { items: Item[]; options: { fg: string; cell: string; thicken?: number; packages?: string[]; macros?: string; cjkFont?: string } }
+type Item = { latex: string; display: boolean; kind?: 'tikz' }
+type Request = {
+  items: Item[]
+  options: { fg: string; cell: string; thicken?: number; maxColumns?: number; packages?: string[]; macros?: string; cjkFont?: string; texFallback?: boolean }
+}
 type Backend = { batches: Item[][]; checks: number; detects: number; engineTexts: string[]; requests: Request[]; argv: string[][]; checkStdin: string[] }
 // What a test's typeset-render answers instead of the usual: a result for the
 // call, or undefined for the usual one.
@@ -54,7 +59,11 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
     const answer = await respond?.(request)
     if (answer) return answer as ReturnType<typeof ran>
     const results = request.items.map(item =>
-      item.latex.includes('\\broken') ? { error: '! Undefined control sequence.' } : { png: PNG, columns: item.display ? 12 : 4, rows: item.display ? 2 : 1, textRow: 0 },
+      item.latex.includes('\\broken')
+        ? { error: '! Undefined control sequence.' }
+        : item.kind === 'tikz'
+          ? { png: PNG, columns: Math.min(30, request.options.maxColumns ?? 255), rows: 9, textRow: 0, engine: 'tex' }
+          : { png: PNG, columns: item.display ? 12 : 4, rows: item.display ? 2 : 1, textRow: 0 },
     )
 
     return ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results }))
@@ -367,6 +376,7 @@ describe('commands and prompt', () => {
     const hint = composed.sections[1]?.text ?? ''
     expect(hint).toContain('$$...$$')
     expect(hint).toContain('mermaid')
+    expect(hint).toContain('```tikz')
     // Under 100 tokens: at most about 4 characters a token in English prose.
     expect(hint.length).toBeLessThan(400)
     const remote = await $.prompt.compose({ ...base, surfaces: ['desktop'] })
@@ -394,6 +404,30 @@ describe('backend', () => {
     expect(backend.requests[0]?.options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
     expect(backend.requests[0]?.options.macros).toBe('\\newcommand{\\RR}{\\mathbb{R}}')
     expect(JSON.parse(backend.checkStdin[0] ?? '{}').options.packages).toEqual(['physics', 'siunitx', 'mhchem'])
+    await ui.unmount()
+  })
+
+  test('sends texFallback, on unless set, with every request and --check', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply('Has $\\SI{1}{\\metre}$.'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.requests[0]?.options.texFallback).toBe(true)
+    expect(JSON.parse(backend.checkStdin[0] ?? '{}').options.texFallback).toBe(true)
+    await ui.unmount()
+  })
+
+  test('texFallback off is sent as false', { options: { texFallback: false } }, async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply('Has $x$.'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.requests[0]?.options.texFallback).toBe(false)
+    expect(JSON.parse(backend.checkStdin[0] ?? '{}').options.texFallback).toBe(false)
     await ui.unmount()
   })
 
@@ -724,6 +758,79 @@ describe('mermaid', () => {
   })
 })
 
+describe('tikz', () => {
+  const PICTURE = 'A circle:\n\n```tikz\n\\draw (0,0) circle (1);\n```\n\nAnd $x$.'
+
+  test('a tikz block draws as a picture, asked for alone at the reply width', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(PICTURE), surface: 'terminal' })
+    // Its source while TeX draws it.
+    const waiting = await ui.findAll({ type: 'Markdown' })
+    expect(waiting.map(item => (item.props as { text?: string }).text)).toContain('```tikz\n\\draw (0,0) circle (1);\n```')
+    await clock.advance(100)
+    expect(backend.batches).toContainEqual([{ latex: '\\draw (0,0) circle (1);', display: true, kind: 'tikz' }])
+    expect(backend.batches).toContainEqual([{ latex: 'x', display: false }])
+    const tikz = backend.requests.find(request => request.items[0]?.kind === 'tikz')
+    expect(tikz?.options.maxColumns).toBe(78)
+    const images = await ui.findAll({ type: 'Image' })
+    expect(images).toHaveLength(2)
+    expect(images.map(image => (image.props as { rows?: number }).rows)).toContain(9)
+    expect(await ui.find({ type: 'Text', text: /shown as source/ })).toBeUndefined()
+    // Drawn: a redraw asks for nothing more.
+    const calls = backend.batches.length
+    await clock.advance(1000)
+    expect(backend.batches).toHaveLength(calls)
+    await ui.unmount()
+  })
+
+  test('in a list item it hangs under the item text', async ($, on) => {
+    const clock = mock.clock(on)
+    const backend = host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply('1. Draw:\n\n   ```tikz\n   \\draw (0,0) -- (1,1);\n   ```\n2. Done'), surface: 'terminal' })
+    await clock.advance(100)
+    expect(backend.batches.flat()).toContainEqual({ latex: '\\draw (0,0) -- (1,1);', display: true, kind: 'tikz' })
+    expect(backend.requests.find(request => request.items[0]?.kind === 'tikz')?.options.maxColumns).toBe(75)
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('a block TeX cannot draw shows its source and one dim reason line', async ($, on) => {
+    const clock = mock.clock(on)
+    host(on, HEALTHY, request =>
+      request.items[0]?.kind === 'tikz'
+        ? ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results: [{ error: 'tikz pictures need TeX Live and Ghostscript: gs not found' }] }))
+        : undefined,
+    )
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    const ui = await $.ui.mount({ ...reply(PICTURE), surface: 'terminal' })
+    await clock.advance(100)
+    const markdown = await ui.findAll({ type: 'Markdown' })
+    expect(markdown.map(item => (item.props as { text?: string }).text)).toContain('```tikz\n\\draw (0,0) circle (1);\n```')
+    const reason = await ui.find({ type: 'Text', text: /tikz picture shown as source/ })
+    expect(reason?.text).toBe('tikz picture shown as source: tikz pictures need TeX Live and Ghostscript: gs not found')
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(1) // the formula alone
+    await ui.unmount()
+  })
+
+  test('a renderer that cannot run shows the source with its reason', async ($, on) => {
+    const clock = mock.clock(on)
+    host(on, { ok: false, problems: ['typeset-render not found'] })
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(100)
+    const ui = await $.ui.mount({ ...reply(PICTURE), surface: 'terminal' })
+    await clock.advance(100)
+    expect(await ui.find({ type: 'Text', text: /tikz picture shown as source: typeset-render not found/ })).toBeDefined()
+    expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
+    await ui.unmount()
+  })
+})
+
 describe('status', () => {
   test('lists the renderer, CJK font, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
     host(on)
@@ -733,6 +840,21 @@ describe('status', () => {
     expect(text).toContain('CJK font: /fonts/NotoSerifCJK-Regular.ttc#2')
     expect(text).toContain('packages: physics; macros: 2 definitions')
     expect(text).toContain('diagrams: colour')
+    expect(text).toContain('TeX fallback: on (found latex, dvipng, dvips, gs, tikz-cd)')
+  })
+
+  test('the TeX line says what is missing, or that the fallback is off', async ($, on) => {
+    host(on, { ...HEALTHY, tex: { latex: false, dvipng: false, dvips: false, gs: true, tikzCd: false, works: null } })
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(text).toContain('TeX fallback: not available (missing latex, dvipng, dvips, tikz-cd')
+  })
+
+  test('texFallback off: the TeX line says so', { options: { texFallback: false } }, async ($, on) => {
+    host(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(text).toContain('TeX fallback: off (texFallback)')
   })
 
   test('no CJK font, no extra packages or macros', async ($, on) => {
