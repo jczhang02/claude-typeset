@@ -53,6 +53,11 @@ GitHub and their sums in that file.
    installed copies download the binary: before it, the empty sums read as
    "no release binary yet".
 
+From the merge in step 1 to the merge in step 4, an installed copy that
+updates finds no binary for the new version and shows formulas as text (a
+clone with its own build is not affected), so keep that gap short: push the
+tag right after step 1.
+
 Pushing the tag and merging the checksums pull request are the owner's to do.
 
 The workflow needs "Allow GitHub Actions to create and approve pull requests"
