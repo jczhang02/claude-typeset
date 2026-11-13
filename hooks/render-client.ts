@@ -600,7 +600,8 @@ async function runBatch($: EngineInterface, batch: Job[]): Promise<void> {
         : isDiagram && isDrawing(raw)
           ? { lines: [...raw.lines], columns: raw.columns }
           : { error: typeof (raw as Failure)?.error === 'string' ? (raw as Failure).error : isDiagram ? 'no drawing' : 'no picture' }
-    settle(job, result, keyOf(job.ref, job.maxColumns), 'error' in result && isTransient(result.error))
+    // A diagram's error is about its source (which may name a node "Timeout"), never a passing one.
+    settle(job, result, keyOf(job.ref, job.maxColumns), !isDiagram && 'error' in result && isTransient(result.error))
   })
 }
 
