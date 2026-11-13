@@ -1,0 +1,168 @@
+# On a v* tag: builds typeset-render for the four platforms, uploads each to
+# the tag's GitHub Release as a bare executable, typeset-render-<target>, and
+# opens a pull request that writes their sha256 sums into
+# renderer/checksums.json. The mod downloads a binary only when its sum is in
+# that file, so users get the release once the owner merges the pull request.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  release:
+    name: Create the release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The program prints its crate version, and the mod checks it against
+      # the version in checksums.json, which comes from the tag.
+      - name: Check the tag names the crate's version
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' renderer/Cargo.toml | head -n 1)
+          if [ "${TAG#v}" != "$crate" ]; then
+            echo "::error::tag $TAG, but renderer/Cargo.toml says $crate"
+            exit 1
+          fi
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+              --notes "typeset-render binaries for Linux (static, musl) and macOS. The mod downloads the one for its platform once the pull request with their sha256 sums is merged."
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            zig: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+            zig: true
+          - target: aarch64-apple-darwin
+            os: macos-15
+            zig: false
+          - target: x86_64-apple-darwin
+            os: macos-15
+            zig: false
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          rustup default stable
+      # Linux binaries link musl statically, through zig as the linker, so one
+      # file runs on any distribution and on arm64 built from an x86_64 runner.
+      - if: matrix.zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+      - if: matrix.zig
+        name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.24.1
+      - name: Build
+        working-directory: renderer
+        env:
+          ZIG: ${{ matrix.zig }}
+        run: |
+          if [ "$ZIG" = true ]; then
+            cargo zigbuild --release --locked --target "$TARGET"
+          else
+            cargo build --release --locked --target "$TARGET"
+          fi
+      - name: Check the binary
+        run: |
+          bin="renderer/target/$TARGET/release/typeset-render"
+          file "$bin"
+          case "$TARGET" in
+            *-linux-musl) file "$bin" | grep -Eq 'statically linked|static-pie linked' ;;
+          esac
+          # Run it where the runner can: Linux x86_64, macOS arm64.
+          case "$TARGET" in
+            x86_64-unknown-linux-musl | aarch64-apple-darwin) "$bin" --version | grep -qx "typeset-render ${TAG#v}" ;;
+          esac
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="typeset-render-$TARGET"
+          cp "renderer/target/$TARGET/release/typeset-render" "$asset"
+          gh release upload "$TAG" "$asset" --clobber
+
+  checksums:
+    name: Open the checksums pull request
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      # Summed from the release itself: exactly the files users download.
+      - name: Download the uploaded binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" --dir assets --pattern 'typeset-render-*'
+      - name: Write renderer/checksums.json
+        run: |
+          sum() {
+            test -s "assets/typeset-render-$1"
+            sha256sum "assets/typeset-render-$1" | cut -d ' ' -f 1
+          }
+          jq -n --arg version "${TAG#v}" \
+            --arg linux_x64 "$(sum x86_64-unknown-linux-musl)" \
+            --arg linux_arm64 "$(sum aarch64-unknown-linux-musl)" \
+            --arg mac_arm64 "$(sum aarch64-apple-darwin)" \
+            --arg mac_x64 "$(sum x86_64-apple-darwin)" \
+            '{version: $version, targets: {
+              "x86_64-unknown-linux-musl": $linux_x64,
+              "aarch64-unknown-linux-musl": $linux_arm64,
+              "aarch64-apple-darwin": $mac_arm64,
+              "x86_64-apple-darwin": $mac_x64
+            }}' > renderer/checksums.json
+          jq -e '[.targets[] | test("^[0-9a-f]{64}$")] | all' renderer/checksums.json
+          cat renderer/checksums.json
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          version="${TAG#v}"
+          branch="release/checksums-$TAG"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add renderer/checksums.json
+          git commit -m "chore(release): record the sha256 sums of $TAG" \
+            -m "The release workflow built and uploaded typeset-render $version for four platforms. With these sums in renderer/checksums.json the mod downloads and verifies the binary for its platform."
+          git push --force origin "$branch"
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = 0 ]; then
+            gh pr create --base "$BASE" --head "$branch" \
+              --title "chore(release): record the sha256 sums of $TAG" \
+              --body "Sums of the four binaries uploaded to the $TAG release, computed from the release assets. Merging this lets the mod download them; check them against the release before merging."
+          fi

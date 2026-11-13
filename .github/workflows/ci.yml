@@ -1,0 +1,74 @@
+# Checks every pull request and every push to main: the renderer's format,
+# lints and tests, and the hooks' tests.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  renderer:
+    name: Renderer (fmt, clippy, test)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: renderer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: renderer
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release --all-targets --locked -- -D warnings
+      # The corpus has Chinese in \text, and its reference cells were drawn
+      # with a CJK font; without one the share within a cell is near the bar.
+      - name: Install a CJK font
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+      # No TeX Live here: it is hundreds of megabytes. The tests that need
+      # latex, dvipng, dvips or Ghostscript print a note and pass without them.
+      - name: Test
+        run: cargo test --release --locked
+      - name: checksums.json names the crate's version
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          listed=$(jq -r .version checksums.json)
+          if [ "$crate" != "$listed" ]; then
+            echo "::error file=renderer/checksums.json::version $listed, but Cargo.toml says $crate"
+            exit 1
+          fi
+
+  hooks:
+    name: Hooks (plugin tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # The version whose hooks API the module is written against. Its tests
+      # run against a fake host: no account, no session, no network.
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.319
+      - name: Validate
+        run: claude plugin validate .
+      - name: Test
+        run: timeout 600 claude plugin test .
+      # tsc --noEmit -p . needs .claude-plugin/types, which Claude Code writes
+      # only when a session loads the mod and which is not committed; it stays
+      # a local check (see CONTRIBUTING.md).
