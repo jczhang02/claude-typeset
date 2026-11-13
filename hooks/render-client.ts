@@ -498,7 +498,8 @@ function settle(job: Job, result: Result, storeKey: string, transient: boolean) 
     if (tries <= RETRIES) return // not kept: the next draw asks again
   }
   if ('error' in result) {
-    errors.push({ latex: job.ref.latex, error: result.error })
+    // "not a tree" only sends a flowchart back to beautiful-mermaid, which draws it: no error to report.
+    if (!result.error.startsWith('not a tree')) errors.push({ latex: job.ref.latex, error: result.error })
     errors.splice(0, Math.max(0, errors.length - ERROR_LOG))
   } else {
     renders.set(storeKey, (renders.get(storeKey) ?? 0) + 1)
