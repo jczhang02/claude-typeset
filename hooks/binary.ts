@@ -159,7 +159,7 @@ async function sweep($: EngineInterface, dir: string) {
 }
 
 /** Downloads the asset into a name of its own, checks it, and renames it to `file`. */
-async function download($: EngineInterface, dir: string, file: string, url: string, sum: string, os: string) {
+async function download($: EngineInterface, dir: string, file: string, asset: string, url: string, sum: string, os: string) {
   await tool($, ['mkdir', '-p', dir])
   await sweep($, dir)
   const part = `${dir}/.${PROGRAM}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}.part`
@@ -167,7 +167,8 @@ async function download($: EngineInterface, dir: string, file: string, url: stri
     try {
       await tool($, ['curl', '-fsSL', '--proto', '=https', '--connect-timeout', '20', '--max-time', String(CURL_MAX_SECONDS), '--retry', '2', '-o', part, url], DOWNLOAD_TIMEOUT_MS)
     } catch (err) {
-      throw new Error(`could not download ${url} (${err instanceof Error ? err.message : String(err)})`)
+      // The asset's name, not its URL: the reason is told in a notice cut at 200 characters.
+      throw new Error(`could not download ${asset} (${err instanceof Error ? err.message : String(err)})`)
     }
     const got = await sha256($, part, os)
     if (got !== sum) throw new Error(`the downloaded ${PROGRAM} failed its sha256 check (expected ${sum.slice(0, 12)}…, got ${got.slice(0, 12)}…) and was deleted`)
@@ -209,7 +210,7 @@ async function locate($: EngineInterface): Promise<string> {
     await remove($, file)
   }
   const asset = `${PROGRAM}-${target}`
-  await download($, dir, file, `${REPO}/v${version}/${asset}`, sum, os)
+  await download($, dir, file, asset, `${REPO}/v${version}/${asset}`, sum, os)
   const says = await versionOf($, file)
   if (says !== expected) throw new Error(`the downloaded ${PROGRAM} does not run${says ? ` (it says ${says})` : ''}`)
 
