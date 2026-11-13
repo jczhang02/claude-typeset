@@ -48,23 +48,36 @@ type Sums = { version: string; targets: Record<string, unknown> }
 // worker, --check and the poller start together), so a session downloads once.
 // Only a found path is kept; a failure is searched again on the next call.
 let found: Promise<string> | undefined
+let isSearching = false
 
 /** The renderer's path, found (and downloaded) once; rejects with the reason it cannot run. */
 export function renderer($: EngineInterface): Promise<string> {
   if (found === undefined) {
     const search = locate($)
     found = search
-    search.catch(() => {
-      if (found === search) found = undefined
-    })
+    isSearching = true
+    search.then(
+      () => {
+        if (found === search) isSearching = false
+      },
+      () => {
+        if (found !== search) return
+        found = undefined
+        isSearching = false
+      },
+    )
   }
 
   return found
 }
 
-/** Searches again on the next call: the program found has stopped running. */
+/**
+ * Searches again on the next call: the program found has stopped running, or
+ * may be there now. A search still under way is kept, since it is looking
+ * afresh already: a second one would start a second download beside it.
+ */
 export function forgetRenderer() {
-  found = undefined
+  if (!isSearching) found = undefined
 }
 
 /** The Rust target for `uname -sm` output, or undefined for a platform without a release binary. */
