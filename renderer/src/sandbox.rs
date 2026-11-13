@@ -72,7 +72,7 @@ impl Outcome {
 /// The environment of every run: paranoid file access, no shell escape,
 /// and no font building (a missing glyph must fail at once).
 fn tex_env(command: &mut Command) {
-    for name in ["TEXINPUTS", "TEXMFOUTPUT", "TEXMFCNF", "TEXFORMATS", "TEXMFHOME"] {
+    for name in ["TEXINPUTS", "TEXMFOUTPUT", "TEXMFCNF", "TEXFORMATS"] {
         command.env_remove(name);
     }
     command.envs([

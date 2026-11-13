@@ -213,7 +213,9 @@ fn first_error(log: &str) -> Option<String> {
 fn measured(log: &str) -> Option<(f64, f64, f64)> {
     static DIM: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^TSDIM (-?[\d.]+)pt,(-?[\d.]+)pt,(-?[\d.]+)pt$").unwrap());
-    let found = DIM.captures(log)?;
+    // The last: a formula may \typeout a line that looks like it, but
+    // only before the real one, which comes after the box.
+    let found = DIM.captures_iter(log).last()?;
     Some((found[1].parse().ok()?, found[2].parse().ok()?, found[3].parse().ok()?))
 }
 
