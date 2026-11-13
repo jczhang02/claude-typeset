@@ -8,8 +8,9 @@
 //! a tree drawn there loses who is whose child; it stays the renderer for
 //! every other diagram. A flowchart reaches the tree drawing only when it is
 //! a tree: one root, at most one parent per node, no edge labels, no
-//! subgraphs, no cycles. Anything else is answered "not a tree", and the
-//! hooks draw it themselves.
+//! subgraphs, no cycles, and some node with two children or more (a plain
+//! chain of steps reads better as boxes and arrows than as a staircase).
+//! Anything else is answered "not a tree", and the hooks draw it themselves.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -209,6 +210,9 @@ fn tree_root(graph: &Graph) -> Result<usize, String> {
     if seen.contains(&false) {
         return Err("not a tree: it has a cycle".into());
     }
+    if children.iter().all(|kids| kids.len() < 2) {
+        return Err("not a tree: it never branches".into());
+    }
     Ok(root)
 }
 
@@ -311,7 +315,7 @@ mod tests {
 
     #[test]
     fn the_root_is_the_node_without_a_parent() {
-        let lines = drawn("flowchart LR\n  B --> C\n  A --> B");
+        let lines = drawn("flowchart LR\n  B --> C & D\n  A --> B");
         assert_eq!(lines[1], "│ A │");
     }
 
@@ -326,6 +330,7 @@ mod tests {
             ),
             ("graph TD\n A --> B\n B --> A", "not a tree: it has a cycle"),
             ("graph TD\n A --> B\n C", "not a tree: it has 2 roots"),
+            ("graph LR\n A --> B --> C --> D", "not a tree: it never branches"),
             ("graph TD\n A -->|yes| B", "not a tree: an edge has a label"),
             ("graph TD\n A -- yes --> B", "not a tree: an edge has a label"),
             ("graph TD\n A <--> B", "not a tree: an edge points both ways"),
