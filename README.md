@@ -260,7 +260,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 - **Formulas show as Unicode, never as pictures.** Run `/typeset status`; a renderer that is not ready says why (for a clone: build it with `cargo build --release` in `renderer/`). Then `/typeset clear`. If the renderer is ready, check that the terminal is Ghostty or kitty and that `tmux show -g allow-passthrough` says `on`. Restart tmux after you change its config.
 - **CJK text in a formula is missing or in the wrong font.** `/typeset status` names the CJK font; set `cjkFont`, or delete `~/.cache/typeset/cjk-font` after installing a new font.
 - **The old cache.** Versions before 4.0.0 kept pictures in `~/.cache/claude-inline-math`; it is no longer used and can be deleted.
-- **A TeX picture is stale** (after you installed a package, say). TeX pictures are kept in `~/.cache/typeset/tex`; delete the folder, then `/typeset clear`.
+- **A TeX picture is stale** (after a TeX Live update, say). TeX pictures are kept in `~/.cache/typeset/tex`; delete the folder, then `/typeset clear`. Installing a package needs neither: formulas are typeset again with it.
 - **A tikz block shows as source.** The dim line under it says why: TeX Live or Ghostscript missing (`/typeset status` lists the TeX tools), a `\usepackage` that is not allowed, or TeX's own error.
 - **Formulas sit too high or too low.** Set `baseline` for your font, and `cell` if tmux reports the wrong size (`tmux display -p '#{client_cell_width}x#{client_cell_height}'`).
 - **Formulas are too large or too small.** Change `ptPx`.

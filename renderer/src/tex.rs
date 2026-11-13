@@ -422,7 +422,10 @@ impl<'a> Tex<'a> {
 
     /// `make`'s result, from the disk cache when it holds it; a failure's
     /// text through `explain`. Only results that depend on the input alone
-    /// are kept.
+    /// are kept. A picture stays right when a package is installed later,
+    /// a refusal may not (the package was missing), so a refusal is filed
+    /// under the installed packages too; a picture is found without
+    /// asking kpsewhich.
     fn cached(
         &self,
         kind: &str,
@@ -431,23 +434,32 @@ impl<'a> Tex<'a> {
         make: impl FnOnce() -> Result<ItemResult, Failure>,
         explain: impl FnOnce(String) -> String,
     ) -> ItemResult {
-        let key = cache::key(&self.key_parts(kind, display, latex));
-        if let Some(hit) = cache::get(&key) {
+        let picture_key = cache::key(&self.key_parts(kind, display, latex, Value::Null));
+        if let Some(hit) = cache::get(&picture_key) {
             return hit;
         }
-        let (result, keep) = match make() {
-            Ok(picture) => (picture.by("tex"), true),
-            Err(Failure::Refused(error)) => (ItemResult::failure(explain(error)), true),
-            Err(Failure::Passing(error)) => (ItemResult::failure(error), false),
+        let mut found: Vec<&String> = installed(&self.cfg.packages).iter().collect();
+        found.sort();
+        let refusal_key = cache::key(&self.key_parts(kind, display, latex, json!(found)));
+        if let Some(hit) = cache::get(&refusal_key) {
+            return hit;
+        }
+        let (result, key) = match make() {
+            Ok(picture) => (picture.by("tex"), Some(&picture_key)),
+            Err(Failure::Refused(error)) => (ItemResult::failure(explain(error)), Some(&refusal_key)),
+            Err(Failure::Passing(error)) => (ItemResult::failure(error), None),
         };
-        if keep && cache::put(&key, &result) {
+        if let Some(key) = key
+            && cache::put(key, &result)
+        {
             self.wrote.store(true, Ordering::Relaxed);
         }
         result
     }
 
-    /// Everything a TeX picture depends on.
-    fn key_parts(&self, kind: &str, display: bool, latex: &str) -> Value {
+    /// Everything a TeX picture depends on (`installed`: the packages TeX
+    /// Live has, for a refusal; null for a picture).
+    fn key_parts(&self, kind: &str, display: bool, latex: &str, installed: Value) -> Value {
         let cfg = self.cfg;
         json!([
             crate::VERSION,
@@ -464,6 +476,7 @@ impl<'a> Tex<'a> {
             cfg.max_columns,
             cfg.packages,
             cfg.macros,
+            installed,
         ])
     }
 

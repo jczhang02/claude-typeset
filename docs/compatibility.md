@@ -104,7 +104,8 @@ refuses it too, the error names both (`ParseError: ...; TeX: ! ...`).
   are kept in `$XDG_CACHE_HOME/typeset/tex` (else `~/.cache/typeset/tex`),
   keyed by a SHA-256 of the renderer version, the options that change the
   picture (colour, cell size, baseline, `ptPx`, `minShrink`, `thicken`,
-  width, `packages`, `macros`) and the formula; at most 2000 entries or
+  width, `packages`, `macros`), the packages TeX Live has and the
+  formula; at most 2000 entries or
   200 MB, the least recently used deleted first. RaTeX's pictures are not
   kept on disk.
 
