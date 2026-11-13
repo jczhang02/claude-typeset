@@ -427,6 +427,19 @@ describe('commands and prompt', () => {
     expect(ui.opened).toHaveLength(0)
   })
 
+  test('an unknown argument is a toast at a terminal, the usage when headless', async ($, on) => {
+    host(on)
+    const ui = panes(on)
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    expect((await $.command.run({ ...RUN, command: 'typeset', args: 'stauts' })).text).toBeUndefined()
+    expect(ui.toasts).toEqual(['unknown argument "stauts": try status, on, off, demo or clear.'])
+    await $.session.start(HEADLESS)
+    const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'stauts' })
+    expect(text).toContain('Unknown argument "stauts"')
+    expect(text).toContain('/typeset status')
+    expect(ui.toasts).toHaveLength(1)
+  })
+
   test('headless, on, off and clear print their answer and toast nothing', async ($, on) => {
     host(on)
     const ui = panes(on)

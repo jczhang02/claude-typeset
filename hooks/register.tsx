@@ -785,8 +785,15 @@ export const register: Register = (on, options) => {
       return { text: statusLines(await checkHealth($)).join('\n') }
     }
 
+    if (isTerminal) return tell(`unknown argument "${verb}": try status, on, off, demo or clear.`)
+
     return { text: `Unknown argument "${verb}".\n${USAGE}` }
-  }).catch(($, e) => ({ text: `/${COMMAND} ${e.args} failed.` }))
+  }).catch(($, e) => {
+    if (!isTerminal) return { text: `/${COMMAND} ${e.args} failed.` }
+    $.ui.toast(`/${COMMAND} ${e.args} failed.`)
+
+    return {}
+  })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     try {
