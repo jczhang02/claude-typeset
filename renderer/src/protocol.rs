@@ -1,7 +1,7 @@
 //! The request the hooks send on stdin and the answer printed on stdout.
 //!
 //! Request:
-//!     {"items": [{"latex": str, "display": bool, "kind": "tikz"?}, ...],
+//!     {"items": [{"latex": str, "display": bool, "kind": "tikz" | "diagram"?}, ...],
 //!      "options": {"fg": "auto" | "#rrggbb", "cell": "auto" | "WxH",
 //!                  "baseline": 0.773, "ptPx": 3.4, "minShrink": 0.8,
 //!                  "thicken": 1.8, "maxColumns": 255, "cjkFont": str,
@@ -10,13 +10,19 @@
 //!
 //! An item with "kind": "tikz" is the body of a ```tikz block (a whole
 //! tikzpicture or its inside), drawn as a picture of at most 80 rows;
-//! without "kind" it is a formula, as before.
+//! an item with "kind": "diagram" is the source of a ```mermaid block (a
+//! mindmap, or a flowchart that may be a tree), drawn as lines of text in at
+//! most maxColumns columns and 80 rows (see diagram.rs); without "kind" it
+//! is a formula, as before.
 //!
 //! Answer (results in item order; the exit status is 0 even when items fail):
 //!     {"cell": {"width", "height"}, "fg": "#rrggbb",
-//!      "results": [{"png", "columns", "rows", "textRow", "engine"} | {"error"}, ...]}
+//!      "results": [{"png", "columns", "rows", "textRow", "engine"}
+//!                  | {"lines", "columns"} | {"error"}, ...]}
 //!
 //! "engine" says who typeset a picture: "ratex", or "tex" for the TeX fallback.
+//! "lines" is a diagram's drawing, one string per terminal row, "columns"
+//! its widest row in terminal cells.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,6 +54,7 @@ pub struct Options {
 pub enum Kind {
     Formula,
     Tikz,
+    Diagram,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +131,7 @@ pub fn parse_items(raw: &Value) -> Vec<Item> {
             display: item.get("display").and_then(Value::as_bool).unwrap_or(false),
             kind: match item.get("kind").and_then(Value::as_str) {
                 Some("tikz") => Kind::Tikz,
+                Some("diagram") => Kind::Diagram,
                 _ => Kind::Formula,
             },
         })
@@ -147,6 +155,10 @@ pub enum ItemResult {
         text_row: u32,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         engine: String,
+    },
+    Drawing {
+        lines: Vec<String>,
+        columns: u32,
     },
     Failure {
         error: String,

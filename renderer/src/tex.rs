@@ -921,7 +921,7 @@ pub fn health(cfg: &Options, cell: Cell, fg: &str) -> (Value, Vec<String>) {
                 Ok(ItemResult::Failure { error }) | Err(Failure::Refused(error) | Failure::Passing(error)) => {
                     problems.push(format!("TeX fallback test failed: {error}"));
                 }
-                Ok(ItemResult::Picture { .. }) => {}
+                Ok(ItemResult::Picture { .. } | ItemResult::Drawing { .. }) => {}
             }
         }
     }
