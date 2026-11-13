@@ -220,11 +220,11 @@ fn tree_root(graph: &Graph) -> Result<usize, String> {
 /// fitting (long labels cut with '…'); refused when even that does not fit
 /// or would leave a label nothing but the '…', or when it is too tall.
 fn fit(tree: &Mindmap, max_columns: usize, noun: &str) -> Result<Drawing, String> {
-    let rows = 3 + usize::from(!tree.root.text.is_empty()) + tree.node_count() - 1;
-    if rows > MAX_ROWS {
-        return Err(format!("{noun} is {rows} rows tall, limit {MAX_ROWS}"));
-    }
     let whole = lines(&mermaid_text::render::mindmap::render(tree, None));
+    // Counted on the drawing itself: the hooks refuse more rows anyway.
+    if whole.len() > MAX_ROWS {
+        return Err(format!("{noun} is {} rows tall, limit {MAX_ROWS}", whole.len()));
+    }
     let wide = widest(&whole);
     if wide <= max_columns {
         return Ok(Drawing {
