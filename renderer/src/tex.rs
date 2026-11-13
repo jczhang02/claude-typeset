@@ -651,14 +651,7 @@ impl<'a> Tex<'a> {
         }
         let dpi = self.dpi_for(wd + 2.0 * border, ht + dp + 2.0 * border, scale);
         let ink = if diagram {
-            let png = self.ghostscript(&dir, dpi)?;
-            let (rgba, width, height) = fit::decode(&png).map_err(Failure::Refused)?;
-            Ink {
-                rgba,
-                width,
-                height,
-                depth: ((dp + border) * dpi / 72.27).round() as i64,
-            }
+            self.diagram_ink(&dir, dpi, dp + border)?
         } else {
             self.dvipng(&dir, dpi)?
         };
@@ -706,6 +699,20 @@ impl<'a> Tex<'a> {
             width,
             height,
             depth,
+        })
+    }
+
+    /// Page 1 of f.dvi through Ghostscript, `below` pt of it under the
+    /// baseline (the box's depth and the border): Ghostscript reports no
+    /// depth, and its page is the tight page preview set.
+    fn diagram_ink(&self, dir: &Workdir, dpi: f64, below: f64) -> Result<Ink, Failure> {
+        let png = self.ghostscript(dir, dpi)?;
+        let (rgba, width, height) = fit::decode(&png).map_err(Failure::Refused)?;
+        Ok(Ink {
+            rgba,
+            width,
+            height,
+            depth: (below * dpi / 72.27).round() as i64,
         })
     }
 
@@ -908,6 +915,38 @@ mod tests {
                     .unwrap() as i64;
                 assert_eq!(last_solid, base_row - 1, "{latex} at {pt_px} px/pt");
             }
+        }
+    }
+
+    /// The same through dvips and Ghostscript, as tikz-cd diagrams are
+    /// drawn: the depth computed from TeX's box puts the baseline where the
+    /// glyphs sit.
+    #[test]
+    fn a_diagram_baseline_is_where_the_glyphs_sit() {
+        let tools = Tools::find();
+        if !tex_here() || !tools.dvips || !tools.gs {
+            eprintln!("note: dvips or gs not on PATH, Ghostscript baseline test skipped");
+            return;
+        }
+        for pt_px in [2.0, 3.4, 4.1] {
+            let mut cfg = options();
+            cfg.pt_px = pt_px;
+            let tex = Tex::new(&cfg, Cell { width: 19, height: 42 }, "#000000");
+            let dir = Workdir::new().unwrap();
+            let document = format!(
+                "{}\\setlength\\PreviewBorder{{1pt}}\\begin{{preview}}\\setbox0\\hbox{{$\\textstyle HEL$}}\\typeout{{TSDIM \\the\\wd0,\\the\\ht0,\\the\\dp0}}\\box0\\end{{preview}}\n\\end{{document}}\n",
+                tex.preamble(&[])
+            );
+            let log = tex.latex(&dir, &document, FORMULA_TIMEOUT).unwrap();
+            let (_, _, dp) = measured(&log).unwrap();
+            let ink = fit::crop_to_ink(&tex.diagram_ink(&dir, tex.full_dpi().round(), dp + 1.0).unwrap());
+            let base_row = ink.height as i64 - ink.depth;
+            let w = ink.width as usize;
+            let last_solid = (0..ink.height as usize)
+                .rev()
+                .find(|&y| (0..w).any(|x| ink.rgba[(y * w + x) * 4 + 3] >= 128))
+                .unwrap() as i64;
+            assert_eq!(last_solid, base_row - 1, "at {pt_px} px/pt");
         }
     }
 
