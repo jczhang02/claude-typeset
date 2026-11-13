@@ -35,7 +35,7 @@ const REQUEST_BUDGET: Duration = Duration::from_secs(30);
 const PARALLEL: usize = 4;
 /// Part of every cache key: raise it when the preamble or the way a
 /// picture is made changes, so no picture of the old one is reused.
-const REVISION: u32 = 1;
+const REVISION: u32 = 2;
 const LOG_READ: u64 = 4 * 1024 * 1024;
 /// A ```tikz block is at most this many rows tall.
 pub const TIKZ_ROWS: u32 = 80;
@@ -115,6 +115,29 @@ saddlebrown 8b4513 salmon fa8072 sandybrown f4a460 seagreen 2e8b57 seashell fff5
 silver c0c0c0 skyblue 87ceeb slateblue 6a5acd slategray 708090 slategrey 708090 snow fffafa \
 springgreen 00ff7f steelblue 4682b4 tan d2b48c teal 008080 thistle d8bfd8 tomato ff6347 turquoise 40e0d0 \
 violet ee82ee wheat f5deb3 white ffffff whitesmoke f5f5f5 yellow ffff00 yellowgreen 9acd32";
+
+// Unicode a model writes in a formula (α, ≤, →, ², ℝ), as TeX math, in
+// pairs: RaTeX takes it, so a formula that falls back for another reason
+// has it too. Ported from the old backend's UNICODE_MATH; declared for the
+// input encoding in \ensuremath, so it works in \text too.
+const UNICODE_MATH: &str = r"α \alpha β \beta γ \gamma δ \delta ε \varepsilon ϵ \epsilon ζ \zeta η \eta θ \theta ϑ \vartheta
+ι \iota κ \kappa λ \lambda μ \mu µ \mu ν \nu ξ \xi ο o π \pi ϖ \varpi ρ \rho ϱ \varrho σ \sigma
+ς \varsigma τ \tau υ \upsilon φ \varphi ϕ \phi χ \chi ψ \psi ω \omega Α A Β B Γ \Gamma Δ \Delta Ε E
+Ζ Z Η H Θ \Theta Ι I Κ K Λ \Lambda Μ M Ν N Ξ \Xi Ο O Π \Pi Ρ P Σ \Sigma Τ T Υ \Upsilon Φ \Phi Χ X
+Ψ \Psi Ω \Omega − - – - ± \pm ∓ \mp × \times ÷ \div · \cdot ⋅ \cdot ∙ \cdot ∘ \circ … \ldots
+⋯ \cdots ⋮ \vdots ⋱ \ddots ∗ * ⋆ \star ≤ \le ≥ \ge ⩽ \leqslant ⩾ \geqslant ≠ \ne ≈ \approx ≡ \equiv
+∼ \sim ≃ \simeq ≅ \cong ∝ \propto ≪ \ll ≫ \gg ≔ \coloneqq ≜ \triangleq → \to ← \leftarrow
+↔ \leftrightarrow ⇒ \Rightarrow ⇐ \Leftarrow ⇔ \Leftrightarrow ↦ \mapsto ⟶ \longrightarrow
+⟹ \Longrightarrow ⟺ \Longleftrightarrow ↑ \uparrow ↓ \downarrow ∈ \in ∉ \notin ∋ \ni ⊂ \subset
+⊆ \subseteq ⊃ \supset ⊇ \supseteq ⊊ \subsetneq ∪ \cup ∩ \cap ∖ \setminus ∅ \emptyset ∀ \forall
+∃ \exists ∄ \nexists ¬ \neg ∧ \wedge ∨ \vee ⊕ \oplus ⊗ \otimes ⊥ \perp ∥ \parallel ‖ \| ∠ \angle
+∑ \sum ∏ \prod ∐ \coprod ∫ \int ∬ \iint ∭ \iiint ∮ \oint ∂ \partial ∇ \nabla √ \surd ∞ \infty
+ℓ \ell ℏ \hbar ħ \hbar ℵ \aleph ℘ \wp ℜ \Re ℑ \Im ⟨ \langle ⟩ \rangle ⌊ \lfloor ⌋ \rfloor ⌈ \lceil
+⌉ \rceil ℝ \mathbb{R} ℕ \mathbb{N} ℤ \mathbb{Z} ℚ \mathbb{Q} ℂ \mathbb{C} ℙ \mathbb{P} 𝔼 \mathbb{E}
+′ ' ″ '' ° {}^\circ † \dagger ‡ \ddagger □ \square ∎ \blacksquare ⁰ ^{0} ¹ ^{1} ² ^{2} ³ ^{3}
+⁴ ^{4} ⁵ ^{5} ⁶ ^{6} ⁷ ^{7} ⁸ ^{8} ⁹ ^{9} ⁺ ^{+} ⁻ ^{-} ⁼ ^{=} ⁽ ^{(} ⁾ ^{)} ⁿ ^{n} ⁱ ^{i} ₀ _{0}
+₁ _{1} ₂ _{2} ₃ _{3} ₄ _{4} ₅ _{5} ₆ _{6} ₇ _{7} ₈ _{8} ₉ _{9} ₊ _{+} ₋ _{-} ₌ _{=} ₍ _{(} ₎ _{)}
+ₐ _{a} ₑ _{e} ₒ _{o} ₓ _{x} ᵢ _{i} ⱼ _{j} ₖ _{k} ₙ _{n}";
 
 /// The TeX programs found on PATH.
 #[derive(Debug, Clone, Copy)]
@@ -547,6 +570,7 @@ impl<'a> Tex<'a> {
                     .collect(),
             );
         }
+        lines.push(unicode_math());
         lines.push(COMPAT.into());
         lines.push(r"\pagestyle{empty}".into());
         lines.push(r"\begin{document}".into());
@@ -829,6 +853,30 @@ impl<'a> Tex<'a> {
     }
 }
 
+/// The \DeclareUnicodeCharacter lines for UNICODE_MATH. As in the old
+/// backend, only what TeX reads as math (\circ, the ^ of °) is wrapped in
+/// \ensuremath; a plain letter (Α as A) stays upright in \text. The en dash
+/// keeps its text form in text; the thin spaces are spaces in both.
+fn unicode_math() -> String {
+    let pairs: Vec<&str> = UNICODE_MATH.split_whitespace().collect();
+    let mut out: String = pairs
+        .chunks(2)
+        .map(|pair| {
+            let code = pair[0].chars().next().map_or(0, u32::from);
+            let tex = pair[1];
+            match code {
+                0x2013 => r"\DeclareUnicodeCharacter{2013}{\TextOrMath{\textendash}{-}}".to_string(),
+                _ if tex.contains(['\\', '^', '_']) => {
+                    format!(r"\DeclareUnicodeCharacter{{{code:04X}}}{{\ensuremath{{{tex}}}}}")
+                }
+                _ => format!(r"\DeclareUnicodeCharacter{{{code:04X}}}{{{tex}}}"),
+            }
+        })
+        .collect();
+    out.push_str(r"\DeclareUnicodeCharacter{2009}{\,}\DeclareUnicodeCharacter{202F}{\,}");
+    out
+}
+
 /// `\let` each command the user's macros define to `\relax`, which LaTeX
 /// takes as not defined, so their \newcommand wins over a package's.
 fn user_first(macros: &str) -> String {
@@ -1012,6 +1060,18 @@ mod tests {
             parsed.picture,
             "\\begin{tikzpicture}\n\\draw (0,0) circle (1);\n\\end{tikzpicture}"
         );
+    }
+
+    #[test]
+    fn the_unicode_table_pairs_one_character_with_its_tex() {
+        let tokens: Vec<&str> = UNICODE_MATH.split_whitespace().collect();
+        assert_eq!(tokens.len() % 2, 0);
+        for pair in tokens.chunks(2) {
+            assert_eq!(pair[0].chars().count(), 1, "{pair:?}");
+            assert!(pair[1].is_ascii(), "{pair:?}");
+        }
+        assert!(unicode_math().contains(r"\DeclareUnicodeCharacter{03B1}{\ensuremath{\alpha}}"));
+        assert!(unicode_math().contains(r"\DeclareUnicodeCharacter{0391}{A}"));
     }
 
     #[test]
