@@ -28,6 +28,12 @@ use crate::sandbox::{self, Outcome, Workdir};
 const FORMULA_TIMEOUT: Duration = Duration::from_secs(6);
 /// A TikZ picture's latex run (pgfplots computes its plots in TeX).
 const PICTURE_TIMEOUT: Duration = Duration::from_secs(20);
+/// \reflectbox and kin, drawn by dvipng as their content (a text box, as
+/// graphicx takes it): it cannot draw
+/// the PostScript specials graphicx makes of them (the old backend's
+/// RENAME did the same).
+const MIRRORLESS: &str = r"\AtBeginDocument{\DeclareDocumentCommand\reflectbox{m}{\mbox{#1}}\DeclareDocumentCommand\mathreflectbox{m}{#1}\DeclareDocumentCommand\scalebox{m o m}{\mbox{#3}}\DeclareDocumentCommand\rotatebox{O{} m m}{\mbox{#3}}\DeclareDocumentCommand\resizebox{s m m m}{\mbox{#4}}}";
+
 /// dvipng, dvips, gs, kpsewhich.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(10);
 /// All TeX runs of one request; later items fail with a passing "timeout".
@@ -35,7 +41,7 @@ const REQUEST_BUDGET: Duration = Duration::from_secs(30);
 const PARALLEL: usize = 4;
 /// Part of every cache key: raise it when the preamble or the way a
 /// picture is made changes, so no picture of the old one is reused.
-const REVISION: u32 = 2;
+const REVISION: u32 = 3;
 const LOG_READ: u64 = 4 * 1024 * 1024;
 /// A ```tikz block is at most this many rows tall.
 pub const TIKZ_ROWS: u32 = 80;
@@ -674,7 +680,9 @@ impl<'a> Tex<'a> {
         let extra = if diagram {
             vec![r"\usepackage{tikz-cd}".to_string()]
         } else {
-            Vec::new()
+            // dvipng draws nothing for a mirrored, scaled or rotated box
+            // (its specials are PostScript): the content, as is.
+            vec![MIRRORLESS.to_string()]
         };
         let document = format!(
             "{preamble}{cjk_open}\\setlength\\PreviewBorder{{{border}pt}}\\begin{{preview}}{open}{colour}${style} {latex}\n$}}\
