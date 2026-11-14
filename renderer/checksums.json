@@ -1,9 +1,9 @@
 {
   "version": "4.0.0",
   "targets": {
-    "x86_64-unknown-linux-musl": "",
-    "aarch64-unknown-linux-musl": "",
-    "aarch64-apple-darwin": "",
-    "x86_64-apple-darwin": ""
+    "x86_64-unknown-linux-musl": "6f94b9fff1e3e52bd36c08fec30a1f4c917f338659cf59ea77378f4933b0dca5",
+    "aarch64-unknown-linux-musl": "3c4594f543d962a65f805a97180a67804cb5a25d925b4fdd8a7a53fa469a80d8",
+    "aarch64-apple-darwin": "7d422ad4c9023ddf201b661844334c4963bbdd1474ce749f8e9aeb5905975570",
+    "x86_64-apple-darwin": "520bcff8713fb227f737a576942d441458c6459d4af78f7afc7de646960469aa"
   }
 }
