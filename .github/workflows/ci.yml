@@ -45,7 +45,10 @@ jobs:
       - name: Test
         run: cargo test --release --locked
       # The mod downloads the version checksums.json names, and the plugin
-      # is installed under plugin.json's: all three must agree.
+      # is installed under plugin.json's. An installed copy is updated only
+      # when plugin.json's version changes, so plugin.json names the crate's
+      # version only once checksums.json holds its sums (the checksums pull
+      # request moves it); before that it names the last release.
       - name: checksums.json and plugin.json name the crate's version
         run: |
           crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
@@ -55,8 +58,18 @@ jobs:
             exit 1
           fi
           plugin=$(jq -r .version ../.claude-plugin/plugin.json)
-          if [ "$crate" != "$plugin" ]; then
-            echo "::error file=.claude-plugin/plugin.json::version $plugin, but renderer/Cargo.toml says $crate"
+          if jq -e '[.targets[] | test("^[0-9a-f]{64}$")] | all' checksums.json > /dev/null; then
+            if [ "$crate" != "$plugin" ]; then
+              echo "::error file=.claude-plugin/plugin.json::version $plugin, but renderer/Cargo.toml says $crate"
+              exit 1
+            fi
+          elif jq -e '[.targets[] | . == ""] | all' checksums.json > /dev/null; then
+            if [ "$crate" = "$plugin" ]; then
+              echo "::error file=.claude-plugin/plugin.json::version $plugin before checksums.json has its sums: a copy updated now would stay without a binary"
+              exit 1
+            fi
+          else
+            echo "::error file=renderer/checksums.json::some sums are set and some are not"
             exit 1
           fi
 
