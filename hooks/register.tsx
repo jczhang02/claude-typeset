@@ -106,7 +106,10 @@ const USAGE = [
 ].join('\n')
 
 type Table = Elements['terminal']
-type Frame = { bullet?: string; prefix?: string; width: number; marginTop: number }
+// `tikzWidth`: the room a ```tikz block is asked for in, the width with the
+// bullet's gutter whether or not the block has the bullet, as a streamed
+// block is prefetched at it (a tikz picture is kept per width).
+type Frame = { bullet?: string; prefix?: string; width: number; tikzWidth?: number; marginTop: number }
 
 let settings: Settings = readSettings({})
 let enabled: boolean | undefined // the /typeset on|off choice; undefined: settings.enabled
@@ -402,6 +405,7 @@ function drawBlocks(
   picture: (ref: MathRef, width: number) => PictureState,
   diagram: (ref: DiagramRef, width: number) => DiagramState,
   width: number,
+  tikzWidth = width,
 ): RenderElement[] {
   const { Box, Markdown } = t
 
@@ -423,7 +427,7 @@ function drawBlocks(
     } else if (block.kind === 'mermaid') {
       body = drawDiagram(t, block, width, diagram)
     } else if (block.kind === 'tikz') {
-      body = drawTikz(t, block, picture({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, width)), width)
+      body = drawTikz(t, block, picture({ latex: block.source, display: true, kind: 'tikz' }, tikzRoom(block, Math.min(width, tikzWidth))), width)
     } else {
       // A picture on a continuation line sits after the hang: it gets the rest.
       const room = Math.max(1, width - block.indent - stringWidth(block.marker ?? ''))
@@ -536,7 +540,7 @@ type Drawn = { text: string; frameKey: string; asked: Asked[]; tree: RenderEleme
 const drawn = new Map<string, Drawn>()
 
 function frameKey(frame: Frame): string {
-  return [frame.bullet ?? '', frame.prefix ?? '', frame.width, frame.marginTop, theme() ?? '', settings.diagramColor].join('|')
+  return [frame.bullet ?? '', frame.prefix ?? '', frame.width, frame.tikzWidth ?? '', frame.marginTop, theme() ?? '', settings.diagramColor].join('|')
 }
 
 /**
@@ -570,7 +574,7 @@ function drawMarkdown(t: Table, site: string, text: string, blocks: Block[], fra
   // Ask for every formula at once, so one batch carries them all. A tikz
   // block is asked for at its own width as it is drawn (it goes alone).
   for (const ref of mathRefs(blocks)) if (ref.kind !== 'tikz') picture(ref, frame.width)
-  const tree = drawFrame(t, frame, drawBlocks(t, blocks, picture, diagram, frame.width))
+  const tree = drawFrame(t, frame, drawBlocks(t, blocks, picture, diagram, frame.width, frame.tikzWidth))
   const made: Drawn = { text, frameKey: key, asked, tree, isPending: asked.some(({ state }) => state === 'pending') }
   drawn.delete(site)
   drawn.set(site, made)
@@ -590,7 +594,11 @@ function prerender(text: string) {
   const found = makePlan(text)
   if (found === null || !('blocks' in found)) return
   const width = lastColumns === undefined ? 255 : frameWidth(lastColumns, BULLET_GUTTER)
-  eachPicture(found.blocks, width, (ref, room) => prefetch(ref, room))
+  // A tikz picture is kept per width: before any draw the width is unknown,
+  // and a guess would cost a TeX run the draw cannot use.
+  eachPicture(found.blocks, width, (ref, room) => {
+    if (ref.kind !== 'tikz' || lastColumns !== undefined) prefetch(ref, room)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -811,6 +819,7 @@ export const register: Register = (on, options) => {
       const frame: Frame = {
         bullet: e.props.isFirstOfReply ? bulletGlyph : undefined,
         width: frameWidth(e.viewport?.columns, gutter),
+        tikzWidth: frameWidth(e.viewport?.columns, BULLET_GUTTER),
         // The engine's addMargin, which the props do not carry: 1 in the
         // transcript as drawn today (a blank row above each block).
         marginTop: 1,

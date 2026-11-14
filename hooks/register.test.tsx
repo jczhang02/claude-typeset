@@ -779,6 +779,38 @@ describe('streaming', () => {
     await ui.unmount()
   })
 
+  // A tikz picture is kept per width: the prefetch must ask for the width
+  // the draw will, or TeX draws it twice.
+  for (const isWarm of [false, true]) {
+    test(`a streamed tikz block is drawn by one TeX run${isWarm ? ', after a first reply' : ', in the first reply'}`, async ($, on) => {
+      const clock = mock.clock(on)
+      const backend = host(on)
+      const text = 'Then:\n\n```tikz\n\\draw (0,0) circle (1);\n```\n\nDone.'
+      on('turn.step', async function* () {
+        yield { kind: 'text' as const, index: 0, text }
+
+        return { turnId: 'turn-1', index: 0, answer: text, toolUses: [], stopReason: 'end_turn' as const, usage: null }
+      })
+      await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+      await clock.advance(0)
+      if (isWarm) {
+        const warm = await $.ui.mount({ ...reply('Before $x$.'), surface: 'terminal' })
+        await clock.advance(1000)
+        await warm.unmount()
+      }
+      const stream = $.turn.step(STEP)
+      while (!(await stream.next()).done) {}
+      await clock.advance(1000)
+      // After a tool call, a text block has no bullet.
+      const ui = await $.ui.mount({ ...reply(text, !isWarm, 'msg-2'), surface: 'terminal' })
+      await clock.advance(1000)
+      expect(await ui.findAll({ type: 'Image' })).toHaveLength(1)
+      const widths = backend.requests.filter(request => request.items[0]?.kind === 'tikz').map(request => request.options.maxColumns)
+      expect(widths).toEqual([78])
+      await ui.unmount()
+    })
+  }
+
   test('a block that ends at a tool call sends its last formulas at once, even during a scan cooldown', async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on)
