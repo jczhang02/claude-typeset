@@ -193,6 +193,27 @@ fn ink_beside_the_box_is_kept() {
 }
 
 #[test]
+fn a_mirrored_box_is_drawn_as_its_content() {
+    if !tex_here("a_mirrored_box_is_drawn_as_its_content") {
+        return;
+    }
+    // dvipng cannot mirror, scale or rotate: the content is drawn instead
+    // of an empty page or the options as text.
+    let results = render(
+        json!([
+            { "latex": r"\reflectbox{KaTeX}", "display": false },
+            { "latex": r"\reflectbox{$x^2$}", "display": false },
+            { "latex": r"\ndownarrow \nuparrow", "display": false },
+        ]),
+        options(),
+    );
+    assert_eq!(results[0]["engine"], "tex", "{}", results[0]);
+    assert!(results[0]["columns"].as_u64().unwrap() >= 5, "{}", results[0]);
+    assert!(results[1]["columns"].as_u64().unwrap() >= 2, "{}", results[1]);
+    assert!(results[2]["columns"].as_u64().unwrap() <= 6, "{}", results[2]);
+}
+
+#[test]
 fn tex_cannot_read_files_outside_its_folder() {
     if !tex_here("tex_cannot_read_files_outside_its_folder") {
         return;
