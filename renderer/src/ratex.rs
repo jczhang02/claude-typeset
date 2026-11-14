@@ -15,6 +15,9 @@ use crate::fit::{Ink, SUPERSAMPLE};
 /// The TeX backend's body size, in TeX points (article, 10pt).
 const BODY_PT: f64 = 10.0;
 
+/// The margin drawn beside the box for ink that stands out of it, in em.
+const OVERHANG_EM: f32 = 2.0;
+
 /// RaTeX's em in raster pixels for `pt_px` terminal pixels per TeX point.
 pub fn em_px(pt_px: f64) -> f64 {
     BODY_PT * pt_px * f64::from(SUPERSAMPLE)
@@ -119,9 +122,12 @@ pub fn typeset(latex: &str, display: bool, fg: [f32; 3], pt_px: f64, macros: &st
     validate_layout(&laid)?;
     let list = to_display_list(&laid);
     let em = em_px(pt_px);
+    // Ink may stand out of the box sideways (\clap, \llap, a negative
+    // kern): a margin keeps it. Above and below, the box is kept as it is.
+    let pad = OVERHANG_EM * em as f32;
     let render = RenderOptions {
         font_size: em as f32,
-        padding: 0.0,
+        padding: pad,
         background_color: Color {
             r: 0.0,
             g: 0.0,
@@ -132,14 +138,32 @@ pub fn typeset(latex: &str, display: bool, fg: [f32; 3], pt_px: f64, macros: &st
     };
     let png = render_to_png(&list, &render)?;
     let (rgba, width, height) = crate::fit::decode(&png)?;
-    // The pixmap's top is the top of the box: the baseline is `height` em down.
-    let base_row = ((list.height * em) as f32).round().clamp(0.0, height as f32) as u32;
+    let (w, h) = (width as usize, height as usize);
+    let margin = (pad.round() as usize).min(w).min(h);
+    let box_w = ((list.width * em).ceil() as usize).clamp(1, w - margin);
+    let box_h = (((list.height + list.depth) * em).ceil() as usize).clamp(1, h - margin);
+    let band = margin..margin + box_h;
+    let inked = |x: usize| band.clone().any(|y| rgba[(y * w + x) * 4 + 3] != 0);
+    let left = (0..margin).find(|&x| inked(x)).unwrap_or(margin);
+    let right = (margin + box_w..w)
+        .rev()
+        .find(|&x| inked(x))
+        .map_or(margin + box_w, |x| x + 1);
+    let cut_w = right - left;
+    let mut cut = Vec::with_capacity(cut_w * box_h * 4);
+    for y in band {
+        cut.extend_from_slice(&rgba[(y * w + left) * 4..(y * w + right) * 4]);
+    }
+    // The cut's top is the top of the box: the baseline is `height` em down.
+    let base_row = ((list.height * em) as f32 + pad - margin as f32)
+        .round()
+        .clamp(0.0, box_h as f32) as u32;
 
     Ok(Ink {
-        rgba,
-        width,
-        height,
-        depth: height as i64 - i64::from(base_row),
+        rgba: cut,
+        width: cut_w as u32,
+        height: box_h as u32,
+        depth: box_h as i64 - i64::from(base_row),
     })
 }
 
