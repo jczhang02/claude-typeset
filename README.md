@@ -14,22 +14,22 @@
   </picture>
 </p>
 
-> 💡 This is a Claude Code mod: a plugin with a hooks module that changes how replies are drawn in the terminal, nothing else. The stored conversation is never changed, so the model, `ctrl+o`, exports and copies still see the LaTeX and mermaid source.
+> This is a Claude Code mod: a plugin with a hooks module that changes only how replies are drawn in the terminal. The stored conversation is never changed, so the model, `ctrl+o`, exports and copies still see the LaTeX and mermaid source.
 
 ## Features
 
-- **Math inline with the text**: `$e^{i\pi} + 1 = 0$` becomes a typeset picture on the text baseline, so it reads like a line in a paper, not like source code
-- **Display math**: `$$...$$` and `\[...\]` are centred on their own lines; a formula wider than the reply is drawn smaller to fit
-- **Works in tmux**: pictures go through tmux's passthrough to Ghostty or kitty, and the cell size comes from tmux itself
-- **Fast**: a native renderer brings one new formula to about 4 ms and ten to about 18 ms; redrawing a typeset reply costs under 2 ms
-- **Broad coverage**: [RaTeX](https://github.com/erweixin/RaTeX), a KaTeX-compatible engine in Rust, checked against the KaTeX function list (99.5 % drawn), with `mhchem`, `amscd` and your own macros; no TeX installation needed
-- **TeX fallback**: with TeX Live installed, a formula RaTeX cannot typeset (`\SI`, `\dv`, `\pdv`, `tikz-cd`) is typeset by TeX instead, on the same baseline
-- **Mermaid diagrams as text art**: flowcharts, sequence, state, class, ER and xychart diagrams drawn in box-drawing characters, coloured by role in Catppuccin; mindmaps and tree-shaped flowcharts as vertical outline trees
-- **TikZ pictures**: a ` ```tikz ` block is drawn as a picture in the text colour, scaled to the reply (needs TeX Live and Ghostscript)
-- **Chinese, Japanese and Korean**: wide characters count as two cells, so text, CJK and formulas wrap together; `\text{面积}` typesets with the system's CJK font
-- **Safe by default**: the engine only lays out math; TeX runs in a private folder with no shell escape, no file access outside it, and time and memory limits, so nothing in a reply can read your files, run programs, or change how another formula is drawn
+- `$e^{i\pi} + 1 = 0$` becomes a typeset picture that sits on the text baseline.
+- Display math (`$$...$$`, `\[...\]`) is centred on its own lines; a formula wider than the reply is drawn smaller to fit.
+- Pictures pass through tmux to Ghostty or kitty, and the cell size comes from tmux itself.
+- A native renderer typesets one new formula in about 4 ms and ten in about 18 ms; redrawing a typeset reply takes under 2 ms.
+- The engine is [RaTeX](https://github.com/erweixin/RaTeX), a KaTeX-compatible engine in Rust. It draws 99.5 % of the KaTeX function list, with `mhchem`, `amscd` and your own macros, and needs no TeX installation.
+- With TeX Live installed, a formula RaTeX cannot typeset (`\SI`, `\dv`, `\pdv`, `tikz-cd`) goes to TeX instead and sits on the same baseline.
+- Mermaid flowcharts, sequence, state, class, ER and xychart diagrams are drawn in box-drawing characters and coloured by role in Catppuccin. Mindmaps and tree-shaped flowcharts become vertical outline trees.
+- A ` ```tikz ` block is drawn as a picture in the text colour, scaled to the reply (needs TeX Live and Ghostscript).
+- Chinese, Japanese and Korean characters count as two cells, so text, CJK and formulas wrap together; `\text{面积}` typesets with the system's CJK font.
+- The engine only lays out math. TeX runs in a private folder with no shell escape, no file access outside it, and time and memory limits, so a reply cannot read your files, run programs, or change how another formula is drawn.
 
-## Quick Start
+## Quick start
 
 > Formerly `inline-math`. The command is now `/typeset`, and the options live under `typeset@…` in `pluginConfigs` (move your old `inline-math@…` entry). A stored `/inline-math off` does not carry over: the mod starts on.
 
@@ -97,13 +97,13 @@ Checks before a pull request and how a release is made: [CONTRIBUTING.md](CONTRI
 
 ## tmux
 
-tmux is a first-class target: the mod is developed in Ghostty inside tmux.
+The mod is developed in Ghostty inside tmux.
 
-- **Pictures** are sent with the kitty graphics protocol. tmux passes them through to the outer terminal only with `allow-passthrough on`; without it, every formula shows as its Unicode stand-in (`x²`, `α + β`, `√π`, `ℝ`) and diagrams still draw, as they are text.
-- **Cell size** decides how large a picture is. Inside tmux the mod asks tmux for the client's cell size (`#{client_cell_width}x#{client_cell_height}`), and looks again every few seconds, so it follows the terminal you attach from. Outside tmux it asks the terminal.
-- **Check it**: `tmux show -g allow-passthrough` must say `on`, and `/typeset status` shows the cell size it found. If it is wrong, set the `cell` option.
+- Pictures are sent with the kitty graphics protocol. tmux passes them through to the outer terminal only with `allow-passthrough on`; without it, every formula shows as its Unicode stand-in (`x²`, `α + β`, `√π`, `ℝ`) and diagrams still draw, as they are text.
+- The cell size decides how large a picture is. Inside tmux the mod asks tmux for the client's cell size (`#{client_cell_width}x#{client_cell_height}`), and looks again every few seconds, so it follows the terminal you attach from. Outside tmux it asks the terminal.
+- To check, `tmux show -g allow-passthrough` must say `on`, and `/typeset status` shows the cell size it found. If it is wrong, set the `cell` option.
 
-## Features in Detail
+## Features in detail
 
 ### Math
 
@@ -142,7 +142,7 @@ A closed ` ```mermaid ` block, at the top level of a reply or in a list item, is
 └────────┘        └─────┘     └────────┘  └──────────┘
 ```
 
-A diagram the mod cannot draw correctly is shown as source, with one dim line under it that says why, never as a drawing that says something the source does not:
+A diagram the mod cannot draw correctly is shown as source, with one dim line under it that says why. That happens for:
 
 - Other kinds (`pie`, `gantt`, ...) and blocks the library cannot parse.
 - Diagrams that are too big: more than 80 rows, 8000 characters or 150 lines, a flowchart of more than 100 nodes or 60 nodes in subgraphs, or wider than the reply. The reason names each layout tried and the limit it broke, such as `left-right: 82 rows, limit 80; top-down: 806 columns, 170 available`.
@@ -232,10 +232,10 @@ Measured from process start to exit, as Claude Code runs `typeset-render` (one r
 <details>
 <summary><strong>How it stays fast</strong></summary>
 
-- **Native engine.** RaTeX parses and lays out a formula in well under a millisecond; the fonts are built into the program. The CJK font is looked up only for a batch with CJK text, and the choice is kept in `~/.cache/typeset/cjk-font`.
-- **TeX only when needed.** A formula goes to TeX only when RaTeX refuses it, and a TeX picture is kept on disk in `~/.cache/typeset/tex` (2000 pictures or 200 MB at most), so each one costs a TeX run once. Several TeX runs in one call go four at a time.
-- **Batches.** Formulas asked for within 30 ms share one call of up to 16. Formulas found while a reply streams gather for up to 400 ms, also while a call is running, so a long reply costs a few calls.
-- **Cheap redraws.** Each reply is parsed once, and a reply whose pictures are ready returns its last drawing. When pictures arrive, only the replies that waited for them are drawn again. Pictures stay in memory for the session.
+- RaTeX parses and lays out a formula in well under a millisecond; the fonts are built into the program. The CJK font is looked up only for a batch with CJK text, and the choice is kept in `~/.cache/typeset/cjk-font`.
+- A formula goes to TeX only when RaTeX refuses it, and a TeX picture is kept on disk in `~/.cache/typeset/tex` (2000 pictures or 200 MB at most), so each one costs a TeX run once. Several TeX runs in one call go four at a time.
+- Formulas asked for within 30 ms share one call of up to 16. Formulas found while a reply streams gather for up to 400 ms, also while a call is running, so a long reply costs a few calls.
+- Each reply is parsed once, and a reply whose pictures are ready returns its last drawing. When pictures arrive, only the replies that waited for them are drawn again. Pictures stay in memory for the session.
 
 </details>
 
