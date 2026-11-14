@@ -37,7 +37,7 @@ You need Claude Code 2.1.311 or later and a terminal with the kitty graphics pro
 
 Formulas are drawn by `typeset-render`, a Rust program in `renderer/`. On first use the mod downloads the build for your platform (Linux x86_64 or arm64, static; macOS arm64 or x86_64) from the GitHub release with `curl`, checks its sha256 against `renderer/checksums.json` with `sha256sum` (`shasum` on macOS), and runs it only if the sum matches. It is kept in `~/.cache/typeset/bin/<version>/` (`$XDG_CACHE_HOME/typeset/...`) and checked again at every session start. Until the release's sums are merged into `checksums.json`, there is nothing to download: build it from a clone (see below). A clone's own build, `renderer/target/release/typeset-render`, is used first when it runs. No Rust toolchain is needed otherwise.
 
-Chinese, Japanese or Korean text inside a formula needs a CJK font on the system (Noto CJK or Source Han; on macOS the system's own).
+Chinese, Japanese or Korean text inside a formula needs a CJK font on the system (Noto CJK or Source Han; on macOS the system's own). Without one, such a formula goes to the TeX fallback, or shows as text.
 
 TeX Live is optional. With `latex` and `dvipng` on `PATH`, formulas the built-in engine cannot typeset (package commands such as `siunitx`'s `\SI` or `physics`' `\dv`) fall back to TeX. With `dvips`, Ghostscript (`gs`) and the `tikz-cd` package as well, `tikz-cd` diagrams and ` ```tikz ` blocks draw too. On Debian or Ubuntu: `sudo apt install texlive-latex-extra texlive-science texlive-pictures dvipng ghostscript` (`texlive-lang-cjk` for CJK text through TeX); on macOS, MacTeX.
 

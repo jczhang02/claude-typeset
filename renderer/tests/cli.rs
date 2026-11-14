@@ -175,6 +175,27 @@ fn a_starred_newcommand_is_read() {
 }
 
 #[test]
+fn cjk_text_with_no_font_for_it_is_not_drawn_blank() {
+    // RaTeX would draw the formula without its CJK text.
+    let options =
+        json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false, "cjkFont": "/nonexistent/font.ttc#0" });
+    let results = render(
+        json!([{ "latex": r"\text{面积} = ab", "display": false }, { "latex": "x", "display": false }]),
+        options.clone(),
+    );
+    assert!(
+        results[0]["error"].as_str().unwrap_or_default().contains("no CJK font"),
+        "{}",
+        results[0]
+    );
+    assert!(results[1]["png"].is_string(), "{}", results[1]);
+    // A file that is no font, or no CJK font, is named as a problem.
+    let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+    let health = run(&["--check"], &json!({ "options": { "cjkFont": manifest } }).to_string());
+    assert!(health["problems"].to_string().contains("cjkFont"), "{health}");
+}
+
+#[test]
 fn a_runaway_macro_stops() {
     let results = render(
         json!([{ "latex": r"\def\a{\a}\a", "display": false }]),

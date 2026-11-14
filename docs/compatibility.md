@@ -211,6 +211,13 @@ CJK text in `\text{...}` is drawn with one system font:
   previous backend drew CJK text in a Song (serif) face;
 - else on macOS Songti, then STHeiti or Hiragino Sans GB.
 
+A face counts only when it has CJK glyphs: a missing file, a collection
+index it lacks (`#99`) or a Latin font is passed over, and `/typeset
+status` names a `cjkFont` that is one of these. RaTeX would leave a
+character its font lacks out of the picture without a word, so a formula
+with a CJK character the chosen face lacks (or with no face at all) is
+not drawn by RaTeX: it goes to the TeX fallback, or shows as text.
+
 The choice is kept in `~/.cache/typeset/cjk-font` while its file exists,
 and looked up only for a batch with CJK text (fontconfig takes about
 10 ms). One font draws all CJK text, so Japanese kanji and Traditional

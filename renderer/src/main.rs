@@ -48,6 +48,9 @@ fn ratex_item(
     fg: [f32; 3],
     cell: protocol::Cell,
 ) -> Result<ItemResult, String> {
+    if let Some(c) = fonts::missing(latex) {
+        return Err(format!("no CJK font found that has {c} (see the cjkFont option)"));
+    }
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         ratex::typeset(latex, display, fg, cfg.pt_px, macros)
     }));
@@ -171,7 +174,7 @@ fn check(request: &Value) -> Value {
     let font = fonts::install(&cfg.cjk_font);
     let mut problems: Vec<String> = Vec::new();
     if !cfg.cjk_font.is_empty() && font.as_deref() != Some(cfg.cjk_font.as_str()) {
-        problems.push(format!("cjkFont {} is not a font file", cfg.cjk_font));
+        problems.push(format!("cjkFont {} is not a font file with CJK glyphs", cfg.cjk_font));
     }
     let test = probe(r"\frac{a}{b}", &cfg, "", detect::rgb(&fg), cell);
     let ok = matches!(test, ItemResult::Picture { .. });

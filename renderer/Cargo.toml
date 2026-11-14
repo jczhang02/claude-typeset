@@ -25,6 +25,7 @@ regex = "1"
 sha2 = "0.11"
 mermaid-text = "=0.58.0"
 unicode-width = "0.2"
+ttf-parser = "0.25"
 
 [profile.release]
 opt-level = 3
