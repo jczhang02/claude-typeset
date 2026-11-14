@@ -132,7 +132,7 @@ fn render(request: &Value) -> Value {
     if items.iter().filter(pictured).any(|item| fonts::needs_cjk(&item.latex)) || fonts::needs_cjk(&cfg.macros) {
         fonts::install(&cfg.cjk_font);
     }
-    let macros = ratex::user_macros(&cfg.macros);
+    let (macros, _) = ratex::user_macros(&cfg.macros);
     let tex = tex::Tex::new(&cfg, cell, &fg);
     let plans: Vec<Plan> = items
         .iter()
@@ -179,7 +179,8 @@ fn check(request: &Value) -> Value {
         problems.push(format!("test formula failed: {error}"));
     }
     if ok && !cfg.macros.is_empty() {
-        let macros = ratex::user_macros(&cfg.macros);
+        let (macros, refused) = ratex::user_macros(&cfg.macros);
+        problems.extend(refused.iter().map(|why| format!("macros: {why}")));
         if let ItemResult::Failure { error } = probe("x", &cfg, &macros, detect::rgb(&fg), cell) {
             problems.push(format!("macros: {error}"));
         }

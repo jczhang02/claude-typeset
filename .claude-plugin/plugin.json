@@ -78,7 +78,7 @@
     "macros": {
       "type": "string",
       "title": "Your LaTeX macros",
-      "description": "Your own definitions (\\newcommand, \\DeclareMathOperator, ...), one or more lines, available in every formula. Trusted as you give them.",
+      "description": "Your own definitions (\\newcommand, \\DeclareMathOperator, ...), one or more lines, available in every formula. One the built-in engine cannot read (an optional argument's default, \\newenvironment) is left to the TeX fallback; /typeset status names it. Trusted as you give them.",
       "default": ""
     },
     "cjkFont": {

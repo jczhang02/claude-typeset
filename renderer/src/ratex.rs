@@ -80,30 +80,119 @@ fn is_defined(name: &str) -> bool {
     BUILTIN.iter().any(|(n, _)| *n == name) || is_known(name)
 }
 
-/// What goes before every formula: the built-in definitions, then the
-/// user's, as RaTeX takes them. The user's are meant to define their names
-/// whatever exists already (RaTeX's `\R`, our `\abs`), and
-/// \DeclareMathOperator, which KaTeX lacks, becomes \operatorname.
-pub fn user_macros(macros: &str) -> String {
-    let macros = OPERATOR.replace_all(macros, |c: &regex::Captures| {
+/// A definition command, or a prefix of one, at the start of the text.
+static DEFINER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^\\(?:(?:re)?newcommand|providecommand|[gex]?def|let|DeclareMathOperator|DeclarePairedDelimiter[A-Za-z]*|(?:re)?newenvironment|global|long|protected)(?:[^A-Za-z]|$)",
+    )
+    .unwrap()
+});
+static PREFIX_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:global|long|protected)\s*$").unwrap());
+/// The name a definition defines.
+static DEFINED_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:(?:re)?newcommand|providecommand|DeclareMathOperator|DeclarePairedDelimiter[A-Za-z]*|[gex]?def|let)\*?\s*\{?\s*\\([A-Za-z]+)").unwrap()
+});
+/// What a name whose definition RaTeX cannot take stands for: a command
+/// RaTeX does not know, so a formula that uses the name fails (and goes to
+/// TeX) rather than drawing RaTeX's own command of that name or ours.
+const REFUSED: &str = "typesetrefused";
+static REFUSED_USE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Undefined control sequence: \\typesetrefused([A-Za-z]+)").unwrap());
+
+/// The user's macros cut into definitions: each piece starts at a
+/// definition command outside any group (text before the first, such as a
+/// comment, goes with it).
+fn definitions(macros: &str) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let (mut start, mut depth) = (0usize, 0i64);
+    let mut chars = macros.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                if depth == 0
+                    && DEFINER.is_match(&macros[i..])
+                    && !macros[start..i].trim().is_empty()
+                    && !PREFIX_END.is_match(&macros[start..i])
+                {
+                    pieces.push(&macros[start..i]);
+                    start = i;
+                }
+                chars.next(); // the escaped character: \{ opens no group
+            }
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '%' => while chars.next_if(|&(_, c)| c != '\n').is_some() {},
+            _ => {}
+        }
+    }
+    if !macros[start..].trim().is_empty() {
+        pieces.push(&macros[start..]);
+    }
+    pieces
+}
+
+/// One definition as RaTeX takes it: \DeclareMathOperator becomes
+/// \operatorname, which KaTeX lacks, and a name that exists already (RaTeX's
+/// `\R`, our `\abs`) is redefined. The star of \newcommand* (no paragraph
+/// in an argument) means nothing in math, and RaTeX would read it as the
+/// name being defined: dropped.
+fn for_ratex(definition: &str) -> String {
+    let definition = OPERATOR.replace_all(definition, |c: &regex::Captures| {
         format!(r"\newcommand{{{}}}{{\operatorname{}{{{}}}}}", &c[2], &c[1], &c[3])
     });
-    let user = DEFINITION.replace_all(&macros, |c: &regex::Captures| {
-        let command = if is_defined(&c[3]) {
-            "renewcommand"
-        } else {
-            "newcommand"
-        };
-        // The star (no paragraph in an argument) means nothing in math, and
-        // RaTeX would read it as the name being defined.
-        format!(r"\{command}{}\{}", &c[2], &c[3])
-    });
+    DEFINITION
+        .replace_all(&definition, |c: &regex::Captures| {
+            let command = if is_defined(&c[3]) {
+                "renewcommand"
+            } else {
+                "newcommand"
+            };
+            format!(r"\{command}{}\{}", &c[2], &c[3])
+        })
+        .into_owned()
+}
+
+/// The user's macros as RaTeX takes them: what goes before every formula
+/// (the built-in definitions, then the user's), and each user definition
+/// RaTeX cannot take, with why. One RaTeX refuses (\newenvironment,
+/// \DeclarePairedDelimiter) or reads only in part (an optional argument's
+/// default, `[2][x]`, which it would draw as text before every formula) is
+/// left out here: a formula that uses it fails in RaTeX and goes to TeX,
+/// which has the user's macros whole.
+pub fn user_macros(macros: &str) -> (String, Vec<String>) {
     let builtin = builtin_macros();
-    match (builtin.is_empty(), user.trim().is_empty()) {
-        (true, _) => user.into_owned(),
-        (false, true) => builtin.to_string(),
-        (false, false) => format!("{builtin}\n{user}"),
+    let mut taken = builtin.to_string();
+    let mut refused = Vec::new();
+    for definition in definitions(macros) {
+        let converted = for_ratex(definition);
+        let candidate = if taken.is_empty() {
+            converted
+        } else {
+            format!("{taken}\n{converted}")
+        };
+        let why = match parse(&candidate) {
+            Ok(nodes) if nodes.is_empty() => {
+                taken = candidate;
+                continue;
+            }
+            Ok(_) => "RaTeX would draw part of it as text (an optional argument?)".to_string(),
+            Err(e) => POSITION.replace(&e.to_string(), "").into_owned(),
+        };
+        if let Some(name) = DEFINED_NAME.captures(definition).map(|c| c[1].to_string()) {
+            let stand_in = format!(r"\let\{name}\{REFUSED}{name}");
+            if parse(&format!("{taken}\n{stand_in}")).is_ok() {
+                taken = format!("{taken}\n{stand_in}");
+            }
+        }
+        let head = definition.trim().lines().next().unwrap_or("");
+        let head = if head.chars().count() > 60 {
+            format!("{}…", head.chars().take(59).collect::<String>())
+        } else {
+            head.to_string()
+        };
+        refused.push(format!("{head} is left to TeX: {why}"));
     }
+    (taken, refused)
 }
 
 /// The margin around a box of `w` x `h` pixels: `wanted`, or as much of it
@@ -138,6 +227,7 @@ fn display_list(latex: &str, display: bool, fg: [f32; 3], macros: &str) -> Resul
         if macros.is_empty() {
             text
         } else {
+            let text = REFUSED_USE.replace(&text, r"\$1 is defined in the macros option in a way RaTeX cannot read");
             POSITION.replace(&text, "").into_owned()
         }
     })?;

@@ -142,6 +142,32 @@ fn the_users_macros_are_defined() {
 }
 
 #[test]
+fn a_definition_ratex_cannot_read_is_left_to_tex() {
+    // RaTeX reads no optional argument's default: it would draw the rest
+    // of the definition before every formula.
+    let macros = "\\newcommand{\\set}[2][x]{\\{#1 : #2\\}}\n\\newenvironment{foo}{}{}\n\\newcommand{\\Id}{I}";
+    let off = json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false });
+    let mut with = off.clone();
+    with["macros"] = json!(macros);
+    let items = json!([{ "latex": "y", "display": false }, { "latex": r"\Id + \set{a}", "display": false }]);
+    let plain = render(items.clone(), off);
+    let results = render(items, with.clone());
+    assert_eq!(results[0]["columns"], plain[0]["columns"], "{}", results[0]);
+    assert!(results[0]["png"].is_string(), "{}", results[0]);
+    let error = results[1]["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains(r"\set is defined in the macros option"),
+        "{}",
+        results[1]
+    );
+    let health = run(&["--check"], &json!({ "options": with }).to_string());
+    let problems = health["problems"].to_string();
+    assert!(problems.contains(r"\\newcommand{\\set}[2][x]"), "{health}");
+    assert!(problems.contains(r"\\newenvironment{foo}"), "{health}");
+    assert!(!problems.contains(r"\\Id"), "{health}");
+}
+
+#[test]
 fn a_starred_newcommand_is_read() {
     let options = json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false, "macros": "\\newcommand*{\\pp}{p}" });
     let results = render(json!([{ "latex": r"\pp + y", "display": false }]), options);
