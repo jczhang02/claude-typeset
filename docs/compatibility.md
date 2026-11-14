@@ -163,7 +163,10 @@ previous backend's command and tikz-cd option filters are gone). Every
 latex, dvipng, dvips, gs and kpsewhich run:
 
 - runs in a fresh private folder (mode 0700) under the system's temporary
-  folder, deleted afterwards, as its own process group;
+  folder, deleted afterwards, as its own process group; on Linux it is
+  killed when the renderer is (the limits below are kept by the
+  renderer), and a folder a killed renderer left is deleted by the first
+  TeX run an hour later;
 - has `openin_any=p` and `openout_any=p`: TeX may not read or write files
   by absolute path, in a parent folder or starting with a dot, so
   `\openin` or `\input` of `/etc/hostname` finds nothing and `\openout`

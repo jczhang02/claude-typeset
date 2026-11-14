@@ -35,6 +35,8 @@ impl Workdir {
             std::process::id(),
             COUNT.fetch_add(1, Ordering::Relaxed)
         );
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(|| sweep_stale(&std::env::temp_dir(), STALE_AFTER));
         let path = std::env::temp_dir().join(name);
         std::fs::DirBuilder::new().mode(0o700).create(&path)?;
         Ok(Workdir { path })
@@ -48,6 +50,43 @@ impl Workdir {
 impl Drop for Workdir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Older than this, a work folder was left by a renderer that was killed
+/// (no run lasts a minute).
+const STALE_AFTER: Duration = Duration::from_secs(3600);
+
+/// Deletes this user's work folders in `temp` older than `age`: a renderer
+/// killed mid-run (Claude Code quitting, the OOM killer) never drops its
+/// Workdir.
+fn sweep_stale(temp: &Path, age: Duration) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return;
+    };
+    // SAFETY: geteuid has no preconditions.
+    let me = unsafe { libc::geteuid() };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let ours = name.strip_prefix("typeset-").is_some_and(|rest| {
+            rest.split('-').count() == 3
+                && rest
+                    .split('-')
+                    .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
+        // Not followed: a link of that name is no folder of ours.
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        let old = meta
+            .modified()
+            .is_ok_and(|at| now.duration_since(at).is_ok_and(|d| d > age));
+        if ours && meta.is_dir() && meta.uid() == me && old {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
     }
 }
 
@@ -134,11 +173,22 @@ pub fn run(argv: &[&str], dir: &Path, timeout: Duration, stdout: Option<&str>) -
         .stderr(Stdio::null());
     tex_env(&mut command);
     let cpu = timeout.as_secs() + 2;
+    #[cfg(target_os = "linux")]
+    let parent = std::process::id() as libc::pid_t;
     // SAFETY: between fork and exec only async-signal-safe calls (setsid,
-    // setrlimit), on values computed before the fork.
+    // prctl, getppid, setrlimit), on values computed before the fork.
     unsafe {
         command.pre_exec(move || {
             libc::setsid(); // its own group, so a kill reaches what it starts
+            // Killed with the renderer (the thread that forks it waits for
+            // it): no run outlives the time and folder limits kept here.
+            #[cfg(target_os = "linux")]
+            {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                if libc::getppid() != parent {
+                    return Err(std::io::Error::other("the renderer is gone"));
+                }
+            }
             let limit = |resource, value: u64| {
                 let lim = libc::rlimit {
                     rlim_cur: value as libc::rlim_t,
@@ -234,4 +284,27 @@ pub fn on_path(program: &str) -> bool {
     std::env::split_paths(&path).any(|dir| {
         std::fs::metadata(dir.join(program)).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn a_work_folder_left_by_a_killed_run_is_swept() {
+        let temp = std::env::temp_dir().join(format!("typeset-sweep-test-{}", std::process::id()));
+        let stale = temp.join("typeset-1-0-123");
+        let fresh = temp.join("typeset-2-0-456");
+        let other = temp.join("typeset-notes");
+        for dir in [&stale, &fresh, &other] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::create_dir_all(fresh.join("f")).unwrap(); // touched now
+        super::sweep_stale(&temp, Duration::from_secs(1));
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+        assert!(other.exists(), "not a work folder's name");
+        std::fs::remove_dir_all(&temp).unwrap();
+    }
 }
