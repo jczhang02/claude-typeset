@@ -137,10 +137,7 @@ pub fn needs_cjk(text: &str) -> bool {
 /// Where the system's choice is kept between runs (asking fontconfig takes
 /// about 10 ms, longer than a formula).
 fn cache_file() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))?;
-    Some(base.join("typeset").join("cjk-font"))
+    Some(crate::cache::base()?.join("cjk-font"))
 }
 
 /// The system's choice: the one kept from an earlier run while its file
