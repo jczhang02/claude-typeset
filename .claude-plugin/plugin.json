@@ -1,6 +1,6 @@
 {
   "name": "typeset",
-  "version": "4.0.0",
+  "version": "3.0.0",
   "description": "Draws the LaTeX in Claude's replies as typeset pictures, inline with the terminal text and on its baseline (kitty graphics: Ghostty, kitty; tmux with passthrough), and mermaid code blocks as Unicode diagrams",
   "author": { "name": "JC Zhang", "email": "chengrui0727@gmail.com" },
   "license": "MIT",

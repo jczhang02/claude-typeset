@@ -1,8 +1,10 @@
 # On a v* tag: builds typeset-render for the four platforms, uploads each to
 # the tag's GitHub Release as a bare executable, typeset-render-<target>, and
 # opens a pull request that writes their sha256 sums into
-# renderer/checksums.json. The mod downloads a binary only when its sum is in
-# that file, so users get the release once the owner merges the pull request.
+# renderer/checksums.json and the version into .claude-plugin/plugin.json.
+# The mod downloads a binary only when its sum is in that file, and installed
+# copies update when plugin.json's version changes, so users get the release,
+# sums and all, once the owner merges the pull request.
 name: Release
 
 on:
@@ -161,12 +163,16 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
-          git add renderer/checksums.json
+          # Only now does plugin.json name the new version: an installed copy
+          # updates when that changes, and so gets the sums with the code.
+          sed -i -E '0,/"version": "[^"]*"/s//"version": "'"$version"'"/' .claude-plugin/plugin.json
+          test "$(jq -r .version .claude-plugin/plugin.json)" = "$version"
+          git add renderer/checksums.json .claude-plugin/plugin.json
           git commit -m "chore(release): record the sha256 sums of $TAG" \
-            -m "The release workflow built and uploaded typeset-render $version for four platforms. With these sums in renderer/checksums.json the mod downloads and verifies the binary for its platform."
+            -m "The release workflow built and uploaded typeset-render $version for four platforms. With these sums in renderer/checksums.json the mod downloads and verifies the binary for its platform, and plugin.json names $version, so installed copies update to it."
           git push --force origin "$branch"
           if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = 0 ]; then
             gh pr create --base "$BASE" --head "$branch" \
               --title "chore(release): record the sha256 sums of $TAG" \
-              --body "Sums of the four binaries uploaded to the $TAG release, computed from the release assets. Merging this lets the mod download them; check them against the release before merging."
+              --body "Sums of the four binaries uploaded to the $TAG release, computed from the release assets, and plugin.json set to $version. Merging this lets the mod download them and installed copies update; check the sums against the release before merging."
           fi

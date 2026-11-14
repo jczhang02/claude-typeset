@@ -94,8 +94,10 @@ formulas.
   their Unicode stand-ins, with the reason in a toast and `/typeset status`;
   it is retried every minute, or after a failed sha256 check first after 5
   minutes, doubling up to an hour. The version downloaded comes from
-  `renderer/checksums.json`; CI checks that it, `Cargo.toml` and
-  `plugin.json` agree.
+  `renderer/checksums.json`; CI checks that it and `Cargo.toml` agree,
+  and that `plugin.json` names that version exactly when the sums are
+  there (the checksums PR moves it), as Claude Code updates an installed
+  copy only when `plugin.json`'s version changes.
 - Version 4.0.0. Pushing the tag and merging the PR wait for the owner.
 
 ## Acceptance
