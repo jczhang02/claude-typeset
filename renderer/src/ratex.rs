@@ -1,6 +1,7 @@
 //! A formula typeset by RaTeX: its ink at SUPERSAMPLE times the terminal's
 //! pixel size, in the formula's colour, and where its baseline is.
 
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use ratex_layout::{LayoutOptions, layout, to_display_list, validate_layout};
@@ -136,13 +137,13 @@ fn definitions(macros: &str) -> Vec<&str> {
 /// `\R`, our `\abs`) is redefined. The star of \newcommand* (no paragraph
 /// in an argument) means nothing in math, and RaTeX would read it as the
 /// name being defined: dropped.
-fn for_ratex(definition: &str) -> String {
+fn for_ratex(definition: &str, earlier: &HashSet<String>) -> String {
     let definition = OPERATOR.replace_all(definition, |c: &regex::Captures| {
         format!(r"\newcommand{{{}}}{{\operatorname{}{{{}}}}}", &c[2], &c[1], &c[3])
     });
     DEFINITION
         .replace_all(&definition, |c: &regex::Captures| {
-            let command = if is_defined(&c[3]) {
+            let command = if earlier.contains(&c[3]) || is_defined(&c[3]) {
                 "renewcommand"
             } else {
                 "newcommand"
@@ -163,8 +164,11 @@ pub fn user_macros(macros: &str) -> (String, Vec<String>) {
     let builtin = builtin_macros();
     let mut taken = builtin.to_string();
     let mut refused = Vec::new();
+    // Names the user's definitions before this one gave RaTeX.
+    let mut earlier = HashSet::new();
     for definition in definitions(macros) {
-        let converted = for_ratex(definition);
+        let converted = for_ratex(definition, &earlier);
+        earlier.extend(DEFINED_NAME.captures_iter(definition).map(|c| c[1].to_string()));
         let candidate = if taken.is_empty() {
             converted
         } else {

@@ -145,7 +145,7 @@ fn the_users_macros_are_defined() {
 fn a_definition_ratex_cannot_read_is_left_to_tex() {
     // RaTeX reads no optional argument's default: it would draw the rest
     // of the definition before every formula.
-    let macros = "\\newcommand{\\set}[2][x]{\\{#1 : #2\\}}\n\\newenvironment{foo}{}{}\n\\newcommand{\\Id}{I}";
+    let macros = "\\newcommand{\\set}[2][x]{\\{#1 : #2\\}}\n\\newenvironment{foo}{}{}\n\\newcommand{\\Id}{J}\\renewcommand{\\Id}{I}";
     let off = json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false });
     let mut with = off.clone();
     with["macros"] = json!(macros);
