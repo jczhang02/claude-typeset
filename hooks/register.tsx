@@ -4,7 +4,7 @@ import { layoutParagraph, mathRefs, parseMessage, stringWidth, toUnicode } from 
 import type { Block, Line, MathRef, PictureState, Run } from './layout'
 import { renderMermaid, treeRoute, treeRows } from './mermaid'
 import type { DiagramResult, DiagramRole, DiagramSegment } from './mermaid'
-import { check, clear, configure, flush, lookup, noteDiagram, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme } from './render-client'
+import { check, clear, configure, flush, lookup, noteDiagram, onHealth, onProblem, prefetch, readSettings, runWorker, startPolling, stats, theme } from './render-client'
 import type { DiagramRef, DiagramState, Health, Settings } from './render-client'
 
 // typeset: draws the LaTeX in Claude's replies as typeset pictures, inline
@@ -650,16 +650,6 @@ function statusLines(health: Health | undefined): string[] {
   return lines
 }
 
-/** Runs a health check and keeps its answer for the status pane, which it redraws. */
-async function checkHealth($: EngineInterface): Promise<Health> {
-  const found = await check($)
-  health = found
-  healthCount += 1
-  await $.state.set(STATUS, healthCount).catch(() => {})
-
-  return found
-}
-
 /**
  * Opens the status pane at once, with the last health check's answer, and
  * checks again; the pane is drawn anew when that check lands. False when no
@@ -686,7 +676,7 @@ async function openStatus($: EngineInterface, columns: number): Promise<boolean>
   }
   // One check at a time: a pane opened again meanwhile waits for the same one.
   if (statusCheck === undefined) {
-    statusCheck = checkHealth($)
+    statusCheck = check($)
       .catch(() => undefined)
       .finally(() => {
         statusCheck = undefined
@@ -707,6 +697,13 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     isTerminal = e.isInteractive && e.surface === 'terminal'
+    // Every health check, the polling's too, is kept for the status pane and
+    // draws it again: it opens on the latest answer.
+    onHealth(found => {
+      health = found
+      healthCount += 1
+      void $.state.set(STATUS, healthCount).catch(() => {})
+    })
     onProblem(reason => {
       if (warned) return
       warned = true
@@ -717,7 +714,7 @@ export const register: Register = (on, options) => {
     // The worker first: nothing awaited below may keep formulas from drawing.
     // Health at once too, so a broken backend is told once and never run per formula.
     void runWorker($)
-    void checkHealth($).catch(() => {})
+    void check($)
     startPolling($)
     await $.command
       .register({
@@ -782,7 +779,7 @@ export const register: Register = (on, options) => {
     if (verb === '' || verb === 'status') {
       if (await openStatus($, e.presentation.columns)) return {}
 
-      return { text: statusLines(await checkHealth($)).join('\n') }
+      return { text: statusLines(await check($)).join('\n') }
     }
 
     if (isTerminal) return tell(`unknown argument "${verb}": try status, on, off, demo or clear.`)
