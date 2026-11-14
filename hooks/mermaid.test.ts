@@ -568,8 +568,9 @@ describe('memo and speed', () => {
     expect(renderMermaid(source, 50)).not.toBe(renderMermaid(source, 51))
   })
 
-  // The median of 7 runs takes about 10 ms; 40 leaves room for a loaded machine.
-  test('a 30-node flowchart draws in under 40 ms after warmup', () => {
+  // The median of 7 runs takes about 10 ms here and 40 on a shared CI
+  // runner; 120 still catches a layout that got ten times slower.
+  test('a 30-node flowchart draws in under 120 ms after warmup', () => {
     for (let i = 0; i < 5; i++) {
       drawn(tree(30, `\n%% warm ${i}`), 200)
     }
@@ -582,7 +583,7 @@ describe('memo and speed', () => {
       expect(result.ok).toBe(true)
     }
     times.sort((a, b) => a - b)
-    expect(times[3] as number).toBeLessThan(40)
+    expect(times[3] as number).toBeLessThan(120)
   })
 })
 
