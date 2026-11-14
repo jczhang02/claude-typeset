@@ -178,6 +178,21 @@ fn a_package_formula_falls_back_to_tex() {
 }
 
 #[test]
+fn ink_beside_the_box_is_kept() {
+    // \mathclap's ink stands out of a box of no width: the old backend drew
+    // these 7 and 6 columns wide.
+    let results = render(
+        json!([
+            { "latex": r"\displaystyle\sum_{\mathclap{1\le i\le j\le n}} x_{ij}", "display": false },
+            { "latex": r"\mathclap{\sum} \quad \mathllap{x} \mathrlap{y} \quad \clap{z} \llap{w} \rlap{v}", "display": false },
+        ]),
+        options(),
+    );
+    assert!(results[0]["columns"].as_u64().unwrap() >= 7, "{}", results[0]);
+    assert!(results[1]["columns"].as_u64().unwrap() >= 6, "{}", results[1]);
+}
+
+#[test]
 fn tex_cannot_read_files_outside_its_folder() {
     if !tex_here("tex_cannot_read_files_outside_its_folder") {
         return;
