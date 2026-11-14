@@ -22,6 +22,8 @@ use unicode_width::UnicodeWidthStr;
 
 pub const MAX_ROWS: usize = 80;
 pub const MAX_SOURCE: usize = 8000; // characters, as the hooks take for a diagram
+/// UTF-16 units of one line the hooks take (four per column of the widest Image).
+const MAX_LINE_UNITS: usize = 4 * crate::protocol::MAX_BOX as usize;
 const MAX_LINES: usize = 400;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,12 +308,19 @@ fn tree_root(graph: &Graph) -> Result<usize, String> {
 /// or would leave a label nothing but the '…', or when it is too tall.
 fn fit(tree: &Mindmap, max_columns: usize, noun: &str) -> Result<Drawing, String> {
     let whole = lines(&mermaid_text::render::mindmap::render(tree, None));
+    // The hooks refuse a line of more UTF-16 units than this, whatever its
+    // width (combining marks, joined emoji): it is refused here, by name.
+    let too_long = |drawn: &[String]| drawn.iter().any(|line| line.encode_utf16().count() > MAX_LINE_UNITS);
+    let refused = || format!("{noun} has a label too long to draw");
     // Counted on the drawing itself: the hooks refuse more rows anyway.
     if whole.len() > MAX_ROWS {
         return Err(format!("{noun} is {} rows tall, limit {MAX_ROWS}", whole.len()));
     }
     let wide = widest(&whole);
     if wide <= max_columns {
+        if too_long(&whole) {
+            return Err(refused());
+        }
         return Ok(Drawing {
             lines: whole,
             columns: wide,
@@ -324,6 +333,9 @@ fn fit(tree: &Mindmap, max_columns: usize, noun: &str) -> Result<Drawing, String
         .any(|line| line.ends_with("── …") || line.trim_end() == "│ … │");
     if columns > max_columns || emptied {
         return Err(format!("{noun} is {wide} columns wide, {max_columns} available"));
+    }
+    if too_long(&cut) {
+        return Err(refused());
     }
     Ok(Drawing { lines: cut, columns })
 }
@@ -384,6 +396,16 @@ mod tests {
         assert_eq!(lines[4], "    ├── a b");
         assert_eq!(lines[5], "    └── c");
         assert_eq!(lines.len(), 6);
+    }
+
+    #[test]
+    fn a_label_of_more_units_than_the_hooks_take_is_refused() {
+        let label = format!("a{}", "\u{301}".repeat(1100));
+        let refused = refusal(&format!("mindmap\n  root\n    {label}\n    b"));
+        assert_eq!(refused, "mindmap has a label too long to draw");
+        // A long label of plain letters is cut to the width instead.
+        let long = drawn(&format!("mindmap\n  root\n    {}\n    b", "x".repeat(1100)));
+        assert!(long.iter().all(|line| line.chars().count() <= 255), "{long:?}");
     }
 
     #[test]
