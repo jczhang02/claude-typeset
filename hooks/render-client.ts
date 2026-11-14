@@ -274,9 +274,13 @@ function isDrawing(value: unknown): value is Drawing {
   )
 }
 
-/** An item error the backend gives for a passing reason, not for the formula. */
+/**
+ * An item error the backend gives for a passing reason, not for the formula:
+ * its own wording for one, at the start (a TeX error quotes the formula's
+ * commands, `\timeout` among them, after a prefix).
+ */
 function isTransient(error: string): boolean {
-  return /time ?out|timed out|deadline|^renderer|memory or output limit/i.test(error)
+  return /^(?:timeout:|renderer could not|(?:dvipng|dvips|Ghostscript) )/.test(error)
 }
 
 function lastLine(text: string): string {
