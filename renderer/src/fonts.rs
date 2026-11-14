@@ -151,11 +151,10 @@ fn system_choice() -> Option<String> {
         }
     }
     let chosen = choose("");
-    if let (Some(file), Some(spec)) = (file, &chosen) {
-        if let Some(dir) = file.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(file, spec);
+    if let (Some(file), Some(spec)) = (file, &chosen)
+        && file.parent().is_some_and(crate::cache::private_dir)
+    {
+        let _ = crate::cache::write_private(&file, spec.as_bytes());
     }
     chosen
 }

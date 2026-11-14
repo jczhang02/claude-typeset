@@ -36,6 +36,50 @@ pub fn folder() -> Option<PathBuf> {
     Some(base()?.join("tex"))
 }
 
+/// Makes `dir` (under base()) readable by the user alone, with every
+/// folder from it up to base(): the cache holds pictures of the user's
+/// conversations. A folder made by an earlier version (0755) is tightened
+/// too. False when `dir` cannot be made.
+pub fn private_dir(dir: &Path) -> bool {
+    match base() {
+        Some(top) => private_dir_under(dir, &top),
+        None => false,
+    }
+}
+
+fn private_dir_under(dir: &Path, top: &Path) -> bool {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    if std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .is_err()
+    {
+        return false;
+    }
+    for folder in dir.ancestors().take_while(|folder| folder.starts_with(top)) {
+        if let Ok(meta) = std::fs::metadata(folder)
+            && meta.permissions().mode() & 0o077 != 0
+        {
+            let _ = std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    true
+}
+
+/// Writes a file only the user may read.
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?
+        .write_all(bytes)
+}
+
 /// The key of everything a picture depends on, as one JSON value.
 pub fn key(parts: &serde_json::Value) -> String {
     Sha256::digest(parts.to_string().as_bytes())
@@ -64,7 +108,7 @@ pub fn put(key: &str, value: &ItemResult) -> bool {
     let Ok(text) = serde_json::to_string(value) else {
         return false;
     };
-    if std::fs::create_dir_all(&dir).is_err() {
+    if !private_dir(&dir) {
         return false;
     }
     let tmp = dir.join(format!(
@@ -72,7 +116,7 @@ pub fn put(key: &str, value: &ItemResult) -> bool {
         std::process::id(),
         std::thread::current().id()
     ));
-    if std::fs::write(&tmp, text).is_err() {
+    if write_private(&tmp, text.as_bytes()).is_err() {
         let _ = std::fs::remove_file(&tmp);
         return false;
     }
@@ -122,6 +166,27 @@ pub fn prune() {
 mod tests {
     use super::base_from;
     use std::path::Path;
+
+    #[test]
+    fn the_cache_is_the_users_alone() {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let outer = std::env::temp_dir().join(format!("typeset-cache-test-{}", std::process::id()));
+        let top = outer.join("typeset");
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(&top)
+            .unwrap();
+        let dir = top.join("tex");
+        assert!(super::private_dir_under(&dir, &top));
+        super::write_private(&dir.join("f.json"), b"{}").unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&top), 0o700, "a folder an earlier version made is tightened");
+        assert_eq!(mode(&outer), 0o755, "nothing above the cache is touched");
+        assert_eq!(mode(&dir.join("f.json")), 0o600);
+        std::fs::remove_dir_all(&outer).unwrap();
+    }
 
     #[test]
     fn an_empty_or_relative_cache_home_is_ignored() {
