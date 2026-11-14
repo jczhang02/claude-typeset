@@ -142,6 +142,7 @@ let resolvedFg: string | undefined
 let resolvedCell: string | undefined
 let backendDown: string | undefined
 let problemHandler: (reason: string) => void = () => {}
+let healthHandler: (health: Health) => void = () => {}
 let batches = 0
 let wake: (() => void) | undefined
 // Ends the worker's gathering wait sooner: after `ms`, or at once for 0.
@@ -232,6 +233,11 @@ export function configure(next: Settings, options: PluginOptions = {}) {
 /** Called once per backend failure, with the reason, when nothing can be drawn. */
 export function onProblem(handler: (reason: string) => void) {
   problemHandler = handler
+}
+
+/** Called with every health check's answer, whoever ran it: the polling's too. */
+export function onHealth(handler: (health: Health) => void) {
+  healthHandler = handler
 }
 
 function isPicture(value: unknown): value is Picture {
@@ -769,6 +775,7 @@ function adopt(found: { fg?: unknown; cell?: unknown }): boolean {
 export async function check($: EngineInterface): Promise<Health> {
   if (backendDown !== undefined) forgetRenderer() // look for the program afresh: it may be there now
   const health = await runCheck($)
+  healthHandler(health)
   if (!health.ok) {
     reportDown(health.problems.join('; ') || 'the renderer is not ready')
 

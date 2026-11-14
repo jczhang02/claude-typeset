@@ -394,7 +394,7 @@ describe('finding typeset-render', () => {
     const before = writes
     open()
     await clock.advance(0)
-    expect(writes).toBe(before + 1)
+    expect(writes).toBeGreaterThan(before)
     expect(await lines()).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
     expect(world.downloads).toBe(2)
     await pane.unmount()

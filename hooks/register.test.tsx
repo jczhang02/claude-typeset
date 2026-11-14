@@ -24,7 +24,17 @@ type Request = {
   items: Item[]
   options: { fg: string; cell: string; thicken?: number; maxColumns?: number; packages?: string[]; macros?: string; cjkFont?: string; texFallback?: boolean }
 }
-type Backend = { batches: Item[][]; checks: number; detects: number; engineTexts: string[]; requests: Request[]; argv: string[][]; checkStdin: string[] }
+// `holdChecks`, while set, keeps every health check from answering until it settles.
+type Backend = {
+  batches: Item[][]
+  checks: number
+  detects: number
+  engineTexts: string[]
+  requests: Request[]
+  argv: string[][]
+  checkStdin: string[]
+  holdChecks?: Promise<void>
+}
 // What a test's typeset-render answers instead of the usual: a result for the
 // call, or undefined for the usual one.
 type Respond = (request: Request) => { value: unknown } | { deny: string } | undefined | Promise<undefined>
@@ -51,6 +61,7 @@ function host(on: On, health: object = HEALTHY, respond?: Respond, detected: obj
     if (e.argv.includes('--check')) {
       backend.checks += 1
       backend.checkStdin.push(e.init?.stdin ?? '')
+      await backend.holdChecks
 
       return ran(JSON.stringify(health))
     }
@@ -1140,6 +1151,30 @@ describe('tikz', () => {
 })
 
 describe('status', () => {
+  test('the pane opens on the latest health check, the polling one too', async ($, on) => {
+    const clock = mock.clock(on)
+    const health: Record<string, unknown> = { ok: false, problems: ['typeset-render not found'] }
+    const backend = host(on, health)
+    const ui = panes(on)
+    let release = () => {}
+    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+    await clock.advance(0)
+    expect(backend.checks).toBe(1)
+    // Repaired: the polling's next check finds it ready.
+    Object.assign(health, HEALTHY)
+    await clock.advance(65_000)
+    expect(backend.checks).toBe(2)
+    // The pane's own check is held: what it opens on is the polling's answer.
+    backend.holdChecks = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const lines = await statusPane($, ui)
+    expect(lines).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
+    expect(lines.join('\n')).not.toContain('NOT READY')
+    release()
+    await clock.advance(0)
+  })
+
   test('lists the renderer, CJK font, packages, macros and diagram colour', { options: { packages: 'physics', macros: '\\newcommand{\\a}{1}\n\\DeclareMathOperator{\\tr}{tr}' } }, async ($, on) => {
     host(on)
     const ui = panes(on)
