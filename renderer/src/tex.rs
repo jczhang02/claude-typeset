@@ -41,7 +41,7 @@ const REQUEST_BUDGET: Duration = Duration::from_secs(30);
 const PARALLEL: usize = 4;
 /// Part of every cache key: raise it when the preamble or the way a
 /// picture is made changes, so no picture of the old one is reused.
-const REVISION: u32 = 3;
+const REVISION: u32 = 4;
 const LOG_READ: u64 = 4 * 1024 * 1024;
 /// A ```tikz block is at most this many rows tall.
 pub const TIKZ_ROWS: u32 = 80;
@@ -707,6 +707,18 @@ impl<'a> Tex<'a> {
         let ink = if diagram {
             self.diagram_ink(&dir, dpi, dp + border)?
         } else {
+            // dvipng reads the image a PSfile special names itself, from
+            // any path: openin_any=p binds TeX alone.
+            let dvi = std::fs::read(dir.file("f.dvi")).map_err(|_| Failure::Refused("TeX made no page".into()))?;
+            match specials(&dvi) {
+                Some(found) if !found.iter().any(|special| loads_a_file(special)) => {}
+                Some(_) => {
+                    return Err(Failure::Refused(
+                        "the formula includes a file (a PSfile special), which is not drawn".into(),
+                    ));
+                }
+                None => return Err(Failure::Refused("TeX made a page the renderer cannot read".into())),
+            }
             self.dvipng(&dir, dpi)?
         };
         Ok(fit::fit_at(&ink, dpi / 72.27 / pt_px, display, self.cfg, self.cell))
@@ -947,8 +959,79 @@ pub fn health(cfg: &Options, cell: Cell, fg: &str) -> (Value, Vec<String>) {
     (report, problems)
 }
 
+/// Whether dvipng would read a file for this special: PSfile= (any case)
+/// names an image it loads itself; the PostScript ones need Ghostscript,
+/// which it never starts here.
+fn loads_a_file(special: &[u8]) -> bool {
+    special.windows(6).any(|w| w.eq_ignore_ascii_case(b"psfile"))
+}
+
+/// The text of every special (`xxx`) in a DVI file, or None when it is not
+/// one this reads to its postamble.
+fn specials(dvi: &[u8]) -> Option<Vec<&[u8]>> {
+    let mut found = Vec::new();
+    let mut at = 0usize;
+    let int = |at: usize, n: usize| -> Option<usize> {
+        let bytes = dvi.get(at..at + n)?;
+        Some(bytes.iter().fold(0usize, |v, &b| (v << 8) | usize::from(b)))
+    };
+    loop {
+        let op = *dvi.get(at)?;
+        at += 1;
+        at += match op {
+            0..=127 | 138 | 140..=142 | 147 | 152 | 161 | 166 | 171..=234 => 0,
+            128..=131 => usize::from(op - 127), // set1-4
+            133..=136 => usize::from(op - 132), // put1-4
+            143..=146 => usize::from(op - 142), // right1-4
+            148..=151 => usize::from(op - 147), // w1-4
+            153..=156 => usize::from(op - 152), // x1-4
+            157..=160 => usize::from(op - 156), // down1-4
+            162..=165 => usize::from(op - 161), // y1-4
+            167..=170 => usize::from(op - 166), // z1-4
+            235..=238 => usize::from(op - 234), // fnt1-4
+            132 | 137 => 8,                     // set_rule, put_rule
+            139 => 44,                          // bop
+            239..=242 => {
+                // xxx1-4: k bytes of length, then the special
+                let k = usize::from(op - 238);
+                let len = int(at, k)?;
+                found.push(dvi.get(at + k..at + k + len)?);
+                k + len
+            }
+            243..=246 => {
+                // fnt_def1-4: k, checksum, size, design size, a, l, name
+                let k = usize::from(op - 242);
+                let names = usize::from(*dvi.get(at + k + 12)?) + usize::from(*dvi.get(at + k + 13)?);
+                k + 14 + names
+            }
+            247 => 14 + usize::from(*dvi.get(at + 13)?), // pre: i, num, den, mag, k, comment
+            248 => return Some(found),                   // post
+            _ => return None,
+        };
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_specials_of_a_dvi_are_read() {
+        let mut dvi = vec![247, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 3, b'a', b'b', b'c'];
+        dvi.push(139);
+        dvi.extend([0u8; 44]);
+        dvi.extend([243, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, b'c', b'm', b'r', b'1']);
+        dvi.extend([239, 10]);
+        dvi.extend(b"color push");
+        dvi.extend([97, 132, 0, 0, 0, 1, 0, 0, 0, 1]);
+        dvi.extend([240, 0, 11]);
+        dvi.extend(b"PSFile=\"/x\"");
+        dvi.extend([140, 248]);
+        let found = super::specials(&dvi).unwrap();
+        assert_eq!(found, [&b"color push"[..], &b"PSFile=\"/x\""[..]]);
+        assert!(!super::loads_a_file(found[0]));
+        assert!(super::loads_a_file(found[1]));
+        assert_eq!(super::specials(&dvi[..dvi.len() - 1]), None, "no postamble");
+    }
     use super::*;
     use crate::protocol::parse_options;
 

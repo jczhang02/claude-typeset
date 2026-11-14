@@ -173,7 +173,9 @@ latex, dvipng, dvips, gs and kpsewhich run:
   outside the folder is refused; `TEXINPUTS` and the like are unset;
 - runs latex with `-no-shell-escape -interaction=nonstopmode
   -halt-on-error`, dvips with `-R2` (no shell, no absolute paths) and
-  Ghostscript with `-dSAFER`;
+  Ghostscript with `-dSAFER`; dvipng loads the image of a `PSfile`
+  special itself, from any path, so a formula whose page has one is
+  refused before dvipng runs;
 - is killed, with anything it started, after a wall-clock limit (6 s for
   a formula's latex, 20 s for a TikZ picture's, 10 s for the other tools),
   and has a CPU time limit just above it;

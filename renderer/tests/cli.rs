@@ -293,6 +293,29 @@ fn tex_cannot_read_files_outside_its_folder() {
 }
 
 #[test]
+fn dvipng_reads_no_image_outside_the_folder() {
+    if !tex_here("dvipng_reads_no_image_outside_the_folder") {
+        return;
+    }
+    // dvipng loads a PSfile special's PNG itself, from any path: RaTeX
+    // refuses \special, so this goes to TeX.
+    let image = fresh_cache().with_extension("png");
+    std::fs::write(&image, b"\x89PNG\r\n\x1a\n").unwrap();
+    let latex = format!(
+        r#"x\special{{PSfile="{}" llx=0 lly=0 urx=72 ury=36 rwi=720}}"#,
+        image.display()
+    );
+    let results = render(json!([{ "latex": latex, "display": true }]), options());
+    let _ = std::fs::remove_file(&image);
+    assert!(results[0]["png"].is_null(), "{}", results[0]);
+    assert!(
+        results[0]["error"].as_str().unwrap().contains("PSfile"),
+        "{}",
+        results[0]
+    );
+}
+
+#[test]
 fn tex_in_an_endless_loop_is_stopped_by_the_time_limit() {
     if !tex_here("tex_in_an_endless_loop_is_stopped_by_the_time_limit") {
         return;
