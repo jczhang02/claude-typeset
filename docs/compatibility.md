@@ -189,8 +189,15 @@ it and that `\def\a{\a}\a` is stopped by the time limit.
 `\R`, a built-in `\abs`) takes the user's definition: `\newcommand` of it
 is read as `\renewcommand`. `\DeclareMathOperator{\tr}{tr}` and
 `\DeclareMathOperator*`, which KaTeX lacks, become `\operatorname{tr}`
-and `\operatorname*`; the star of `\newcommand*` is dropped. `/typeset
-status` names a definition RaTeX refuses.
+and `\operatorname*`; the star of `\newcommand*` is dropped.
+
+Each definition is checked on its own. One RaTeX refuses
+(`\newenvironment`, `\DeclarePairedDelimiter`) or reads only in part (an
+optional argument with its default, `\newcommand{\set}[2][x]{...}`, whose
+rest RaTeX would draw as text) is left to TeX: the other formulas draw
+as usual, and one that uses the name goes to the TeX fallback, which has
+the macros whole (without TeX it shows as text). `/typeset status` names
+each definition left to TeX.
 
 ## Chinese, Japanese and Korean
 

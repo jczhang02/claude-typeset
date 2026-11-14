@@ -268,7 +268,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`:
 | `promptHint` | `true` | Add a short note (under 100 tokens) to Claude's system prompt: write math as `$...$` and `$$...$$`, never in code blocks; mermaid blocks draw as diagrams (`mindmap` for hierarchies), tikz blocks as pictures. |
 | `texFallback` | `true` | Typeset a formula the built-in engine refuses with TeX Live, when `latex` and `dvipng` are installed; also what draws `tikz-cd` and ` ```tikz ` blocks. Off: such formulas show as text, tikz blocks as source. |
 | `packages` | empty | Extra TeX packages for the TeX fallback, separated by commas or spaces (`physics, tensor`); a ` ```tikz ` block may load them too. One that is not installed is skipped, and `/typeset status` names it. |
-| `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. A name the engine already has (`\R`) takes your definition. In `settings.json` write `\n` between lines and `\\` for each backslash. |
+| `macros` | empty | Your own definitions for every formula: `\newcommand`, `\DeclareMathOperator`, `\def`, one or more lines. A name the engine already has (`\R`) takes your definition. A definition the built-in engine cannot read (an optional argument's default, `\newenvironment`, `\DeclarePairedDelimiter`) is left to the TeX fallback, and `/typeset status` names it. In `settings.json` write `\n` between lines and `\\` for each backslash. |
 | `cjkFont` | empty | A font file for CJK text in formulas: a path, or `path#index` for a collection (`.ttc`). Empty: the system's own, a serif face (Noto Serif CJK, Source Han Serif) first. |
 | `diagramColor` | `true` | Colour diagrams by role. Off: the text colour alone. |
 
