@@ -54,7 +54,7 @@ pub const TIKZ_ROWS: u32 = 80;
 const BORDER_PT: f64 = 1.0;
 const OVERHANG_BORDER_PT: f64 = 60.0;
 const PICTURE_BORDER_PT: f64 = 4.0; // TikZ's bounding box leaves out half a line width
-static OVERHANG: LazyLock<Regex> = LazyLock::new(|| {
+pub static OVERHANG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:math[clr]lap|[clr]lap|smash|begin\s*\{CD\}|makebox)(?:[^A-Za-z]|$)|\\(?:hspace\*?|kern|mkern|hskip|mskip)\s*\{?\s*-").unwrap()
 });
 static DIAGRAM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\begin\s*\{tikzcd\}").unwrap());
