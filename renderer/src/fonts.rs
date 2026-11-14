@@ -30,10 +30,13 @@ const MAC_FONTS: &[&str] = &[
 /// Characters one of which a CJK face has: Chinese, Japanese kana, Hangul.
 const PROBES: &[char] = &['中', 'あ', '한'];
 
+/// A font file's bytes and the index of a face in it.
+type FaceFile = Arc<(Vec<u8>, u32)>;
+
 /// The file of a face as RaTeX takes it (`path` or `path#index`), read, and
 /// its index; the last one read is kept, as a CJK font is large.
-fn read_face(spec: &str) -> Option<Arc<(Vec<u8>, u32)>> {
-    static LAST: Mutex<Option<(String, Option<Arc<(Vec<u8>, u32)>>)>> = Mutex::new(None);
+fn read_face(spec: &str) -> Option<FaceFile> {
+    static LAST: Mutex<Option<(String, Option<FaceFile>)>> = Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((kept, face)) = last.as_ref()
         && kept == spec
