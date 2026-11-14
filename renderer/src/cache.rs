@@ -3,7 +3,8 @@
 //! formula that falls back to TeX costs that once. RaTeX's pictures take a
 //! few milliseconds and are not kept.
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
@@ -14,13 +15,25 @@ const MAX_ENTRIES: usize = 2000;
 const MAX_BYTES: u64 = 200 * 1024 * 1024;
 const STALE_TMP: Duration = Duration::from_secs(3600);
 
+/// $XDG_CACHE_HOME/typeset, else ~/.cache/typeset; None without a home.
+pub fn base() -> Option<PathBuf> {
+    base_from(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))
+}
+
+/// An empty or relative XDG_CACHE_HOME is ignored, as the XDG spec says
+/// (else the cache would land in the session's working folder).
+fn base_from(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    let absolute = |dir: &OsString| Path::new(dir).is_absolute();
+    let cache = xdg
+        .filter(absolute)
+        .map(PathBuf::from)
+        .or_else(|| home.filter(absolute).map(|home| PathBuf::from(home).join(".cache")))?;
+    Some(cache.join("typeset"))
+}
+
 /// The folder, or None without a home (then nothing is kept).
 pub fn folder() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
-    Some(base.join("typeset").join("tex"))
+    Some(base()?.join("tex"))
 }
 
 /// The key of everything a picture depends on, as one JSON value.
@@ -102,5 +115,25 @@ pub fn prune() {
         let _ = std::fs::remove_file(path);
         count -= 1;
         total -= size;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base_from;
+    use std::path::Path;
+
+    #[test]
+    fn an_empty_or_relative_cache_home_is_ignored() {
+        let home = Some("/home/someone".into());
+        let at_home = Path::new("/home/someone/.cache/typeset");
+        assert_eq!(base_from(Some("".into()), home.clone()).unwrap(), at_home);
+        assert_eq!(base_from(Some("cache".into()), home.clone()).unwrap(), at_home);
+        assert_eq!(base_from(None, home.clone()).unwrap(), at_home);
+        assert_eq!(
+            base_from(Some("/tmp/xdg".into()), home).unwrap(),
+            Path::new("/tmp/xdg/typeset")
+        );
+        assert_eq!(base_from(Some("".into()), Some("".into())), None);
     }
 }
