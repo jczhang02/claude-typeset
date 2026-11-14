@@ -399,4 +399,31 @@ describe('finding typeset-render', () => {
     expect(world.downloads).toBe(2)
     await pane.unmount()
   })
+
+  test('a status pane opened before the first check lands asks for the rows of the whole report', async ($, on) => {
+    const clock = mock.clock(on)
+    let open = () => {}
+    const opened = new Promise<void>(resolve => {
+      open = resolve
+    })
+    host(on, { checksums: sums(GOOD), download: () => 'good', gate: () => opened })
+    const rows: (number | undefined)[] = []
+    on('ui.open', (_, e) => {
+      rows.push(e.rows)
+
+      return { value: { isPlaced: true as const } }
+    })
+    await $.session.start(START)
+    await clock.advance(0)
+    // The first download still runs: no health check has landed.
+    await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
+    expect((await pane.findAll({ type: 'Text' })).map(found => found.text)).toContain('renderer: checking...')
+    await pane.unmount()
+    open()
+    await clock.advance(0)
+    await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toBeGreaterThanOrEqual(rows[1] ?? Infinity)
+  })
 })

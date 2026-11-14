@@ -61,6 +61,9 @@ const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
 const STATUS_PANE = 'typeset-status'
 // What the status pane reads while drawing, so a landed health check redraws it.
 const STATUS = { plugin: 'typeset', key: 'status' } as const
+// Rows the health check's lines add to the status report once it lands, a
+// wrapped cell line included: renderer, TeX, cell, colour, CJK font, less "checking...".
+const HEALTH_ROWS = 5
 
 // Memo bounds: trees by drawn site, parses by text. Above the replies of a
 // long session, as one redraw of the whole transcript must find them all
@@ -660,8 +663,12 @@ async function openStatus($: EngineInterface, columns: number): Promise<boolean>
   if (!isTerminal) return false
   // Body rows the report wants: the title, a blank row, its lines as they
   // wrap a little inside the terminal's width (the frame), a blank row, the hint.
+  // Before the first check lands (a first download) the renderer's lines are one
+  // "checking..." row: room is asked for the rest too, as the inline frame
+  // shrinks to what it draws but scrolls what it has no room for.
   const room = Math.max(20, columns - 4)
-  const rows = statusLines(health).reduce((sum, line) => sum + Math.max(1, Math.ceil(stringWidth(line) / room)), 0) + 4
+  const pending = health === undefined ? HEALTH_ROWS : 0
+  const rows = statusLines(health).reduce((sum, line) => sum + Math.max(1, Math.ceil(stringWidth(line) / room)), 0) + 4 + pending
   let opened: UiOpenResult
   try {
     opened = await $.ui.open({ id: STATUS_PANE, title: `/${COMMAND} status`, focus: true, closeOnEscape: true, holdToasts: true, rows })
