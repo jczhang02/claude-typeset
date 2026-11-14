@@ -288,16 +288,34 @@ fn stack_lines(latex: &str) -> String {
 }
 
 /// The formula as an engine should see it.
+/// physics' power of a function: \sin[2](x) is \sin^{2}(x). Only a short
+/// number or n, m, k: \sin[x] may be a bracket.
+static POWERED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\\(?P<name>sin|cos|tan|csc|sec|cot|sinh|cosh|tanh|csch|sech|coth|arcsin|arccos|arctan|exp|log|ln)\s*\[(?P<power>-?\d{1,2}|[nmk])\]",
+    )
+    .unwrap()
+});
+
 pub fn normalize(latex: &str, display: bool) -> String {
     let latex = strip_comments(&latex.replace('\r', ""));
     let latex = BLANK_LINES.replace_all(&latex, "\n");
     let latex = strip_numbering(&unwrap_environment(latex.trim()));
+    let latex = POWERED.replace_all(&latex, r"\${name}^{${power}}").into_owned();
     if display { stack_lines(&latex) } else { latex }
 }
 
 #[cfg(test)]
 mod tests {
     use super::normalize;
+
+    #[test]
+    fn a_powered_function_takes_its_power_as_a_superscript() {
+        assert_eq!(
+            normalize(r"\sin[2](x) + \cos [n](x) + \sin[x]", false),
+            r"\sin^{2}(x) + \cos^{n}(x) + \sin[x]"
+        );
+    }
 
     #[test]
     fn a_whole_align_becomes_aligned_without_numbers() {
