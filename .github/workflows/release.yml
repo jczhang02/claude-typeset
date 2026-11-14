@@ -71,7 +71,11 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
     steps:
+      # No token left in .git/config: the build runs every build script of
+      # the dependencies, and only the upload step needs the token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --target "$TARGET"
