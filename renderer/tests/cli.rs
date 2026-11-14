@@ -142,6 +142,13 @@ fn the_users_macros_are_defined() {
 }
 
 #[test]
+fn a_starred_newcommand_is_read() {
+    let options = json!({ "fg": "#4c4f69", "cell": "19x42", "texFallback": false, "macros": "\\newcommand*{\\pp}{p}" });
+    let results = render(json!([{ "latex": r"\pp + y", "display": false }]), options);
+    assert_eq!(results[0]["engine"], "ratex", "{}", results[0]);
+}
+
+#[test]
 fn a_runaway_macro_stops() {
     let results = render(
         json!([{ "latex": r"\def\a{\a}\a", "display": false }]),

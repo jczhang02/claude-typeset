@@ -94,7 +94,9 @@ pub fn user_macros(macros: &str) -> String {
         } else {
             "newcommand"
         };
-        format!(r"\{command}{}{}\{}", &c[1], &c[2], &c[3])
+        // The star (no paragraph in an argument) means nothing in math, and
+        // RaTeX would read it as the name being defined.
+        format!(r"\{command}{}\{}", &c[2], &c[3])
     });
     let builtin = builtin_macros();
     match (builtin.is_empty(), user.trim().is_empty()) {

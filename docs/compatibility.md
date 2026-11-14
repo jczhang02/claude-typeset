@@ -189,7 +189,8 @@ it and that `\def\a{\a}\a` is stopped by the time limit.
 `\R`, a built-in `\abs`) takes the user's definition: `\newcommand` of it
 is read as `\renewcommand`. `\DeclareMathOperator{\tr}{tr}` and
 `\DeclareMathOperator*`, which KaTeX lacks, become `\operatorname{tr}`
-and `\operatorname*`. `/typeset status` names a definition RaTeX refuses.
+and `\operatorname*`; the star of `\newcommand*` is dropped. `/typeset
+status` names a definition RaTeX refuses.
 
 ## Chinese, Japanese and Korean
 
