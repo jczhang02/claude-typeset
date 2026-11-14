@@ -239,6 +239,31 @@ describe('replies', () => {
     await ui.unmount()
   })
 
+  // A TeX error quotes the command it did not know: `\timeout` is the
+  // formula's fault, not a passing one; the renderer's own time limit is.
+  const failing = (error: string) => (request: Request) =>
+    ran(JSON.stringify({ cell: { width: 19, height: 42 }, fg: '#4c4f69', results: request.items.map(() => ({ error })) }))
+  for (const [error, isAskedAgain] of [
+    ['ParseError: Undefined control sequence: \\timeout; TeX: ! Undefined control sequence. \\timeout', false],
+    ['renderer failed on this formula', false],
+    ['timeout: the TeX time of this batch is used up', true],
+    ['dvipng timed out', true],
+  ] as const) {
+    test(`a formula that failed with "${error}" is ${isAskedAgain ? '' : 'not '}asked for again`, async ($, on) => {
+      const clock = mock.clock(on)
+      const backend = host(on, HEALTHY, failing(error))
+      await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+      await clock.advance(0)
+      for (let i = 0; i < 3; i++) {
+        const ui = await $.ui.mount({ ...reply('Then $\\timeout x$.'), surface: 'terminal' })
+        await clock.advance(100)
+        await clock.advance(1000)
+        await ui.unmount()
+      }
+      expect(backend.batches.length > 1).toBe(isAskedAgain)
+    })
+  }
+
   test('the formula of an unclosed tail is not asked for', async ($, on) => {
     const clock = mock.clock(on)
     const backend = host(on)
