@@ -172,7 +172,14 @@ jobs:
             -m "The release workflow built and uploaded typeset-render $version for four platforms. With these sums in renderer/checksums.json the mod downloads and verifies the binary for its platform, and plugin.json names $version, so installed copies update to it."
           git push --force origin "$branch"
           if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = 0 ]; then
-            gh pr create --base "$BASE" --head "$branch" \
+            if ! gh pr create --base "$BASE" --head "$branch" \
               --title "chore(release): record the sha256 sums of $TAG" \
-              --body "Sums of the four binaries uploaded to the $TAG release, computed from the release assets, and plugin.json set to $version. Merging this lets the mod download them and installed copies update; check the sums against the release before merging."
+              --body "Sums of the four binaries uploaded to the $TAG release, computed from the release assets, and plugin.json set to $version. Merging this lets the mod download them and installed copies update; check the sums against the release before merging."; then
+              # Most often "Allow GitHub Actions to create and approve pull
+              # requests" is off. The branch is pushed: say where to open it.
+              url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
+              echo "::error::could not open the checksums pull request; is \"Allow GitHub Actions to create and approve pull requests\" on? Open it by hand: $url"
+              echo "The sums are on \`$branch\`. Open the pull request by hand: $url" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
           fi

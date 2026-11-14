@@ -34,7 +34,11 @@ GitHub and their sums in that file.
    sums left empty. Leave `.claude-plugin/plugin.json` at the last
    release's version: the checksums pull request moves it. Merge that to
    `main`.
-2. Push the tag: `git tag v4.0.0 && git push origin v4.0.0`.
+2. Check that the workflow may open pull requests (step 3):
+   `gh api repos/jczhang02/claude-typeset/actions/permissions/workflow --jq .can_approve_pull_request_reviews`
+   must print `true`; if not, turn on "Allow GitHub Actions to create and
+   approve pull requests" in Settings > Actions > General. Then push the
+   tag: `git tag v4.0.0 && git push origin v4.0.0`.
 3. `.github/workflows/release.yml` checks that the tag names the crate's
    version, creates the release, builds the four targets and uploads each as
    a bare executable named `typeset-render-<target>`:
@@ -70,7 +74,10 @@ right after pulling, or pull after step 4.
 Pushing the tag and merging the checksums pull request are the owner's to do.
 
 The workflow needs "Allow GitHub Actions to create and approve pull requests"
-on in the repository's Actions settings. A pull request opened with the
+on in the repository's Actions settings (step 2); its token cannot read the
+setting, so it cannot check it first. Without it the checksums job pushes
+the branch, fails, and names the link to open the pull request by hand. A
+pull request opened with the
 workflow's token starts no other workflow, so CI does not run on it; it
 changes only `checksums.json` and `plugin.json`'s version. Rerunning a failed release replaces the
 uploaded files (`--clobber`) and force-pushes the pull request's branch.
