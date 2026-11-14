@@ -12,6 +12,8 @@ pub const LIGHT_FG: &str = "#4c4f69"; // catppuccin latte text
 const HELPER_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// A small helper program's stdout, or "" when it fails or takes too long.
+/// Its stdout is read while it runs: a program that writes more than a
+/// pipe holds would otherwise wait on the pipe until the time limit.
 pub fn quiet_run(argv: &[&str], timeout: Duration) -> String {
     let Some((program, args)) = argv.split_first() else {
         return String::new();
@@ -25,29 +27,33 @@ pub fn quiet_run(argv: &[&str], timeout: Duration) -> String {
     else {
         return String::new();
     };
+    let reader = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut out = String::new();
+            let _ = stdout.read_to_string(&mut out);
+            out
+        })
+    });
     let start = Instant::now();
-    loop {
+    let ok = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return String::new();
-                }
-                break;
-            }
+            Ok(Some(status)) => break status.success(),
             Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(5)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return String::new();
+                break false;
             }
         }
+    };
+    // Done: the pipe closes with the program and the read ends. Failed: the
+    // reader is left behind, as something the program started may hold the
+    // pipe open.
+    if !ok {
+        return String::new();
     }
-    let mut out = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        use std::io::Read;
-        let _ = stdout.read_to_string(&mut out);
-    }
-    out
+    reader.and_then(|r| r.join().ok()).unwrap_or_default()
 }
 
 pub fn parse_cell(spec: &str) -> Option<Cell> {
@@ -157,5 +163,23 @@ pub fn rgb(fg: &str) -> [f32; 3] {
         [at(1), at(3), at(5)]
     } else {
         [0.8, 0.84, 0.96]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quiet_run;
+    use std::time::{Duration, Instant};
+
+    /// More output than a pipe holds comes back whole, and at once.
+    #[test]
+    fn a_long_output_is_read_while_the_program_runs() {
+        let start = Instant::now();
+        let out = quiet_run(
+            &["sh", "-c", "head -c 200000 /dev/zero | tr '\\0' a"],
+            Duration::from_secs(3),
+        );
+        assert_eq!(out.len(), 200_000);
+        assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
     }
 }
