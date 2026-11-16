@@ -141,11 +141,11 @@ const reply = (text: string) => ({
 
 const START = { cwd: '/', surface: 'terminal' as const, isInteractive: true }
 const RUN = { origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 80 } }
-const STATUS_PANE = {
+const BAND = {
   plugin: 'typeset',
-  component: 'Pane' as const,
-  requestId: 'typeset-status',
-  props: { title: '/typeset status', isFocused: true, bodyColumns: 76, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  component: 'AbovePrompt' as const,
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 40, bodyColumns: 100, scroll: { offset: 0, bodyRows: 39 }, view: {} },
+  surface: 'terminal' as const,
 }
 
 const commands = (world: World, command: string) => world.argv.filter(argv => argv[0] === command)
@@ -317,8 +317,8 @@ describe('finding typeset-render', () => {
     expect(world.toasts[0]).toContain('sha256')
   })
 
-  // No ui.open answers here, so the pane fails to open and status prints
-  // its report, after the health check it waits for.
+  // Status opens the band and checks health: that check waits for the
+  // download under way rather than starting another.
   test('/typeset status during a download waits for it rather than starting another', async ($, on) => {
     const clock = mock.clock(on)
     let online = false
@@ -350,7 +350,7 @@ describe('finding typeset-render', () => {
     expect(world.files.get(CACHED)).toBe('good')
   })
 
-  test('the status pane opens at once during a download, and is drawn again when it lands', async ($, on) => {
+  test('the status band opens at once during a download, and is drawn again when it lands', async ($, on) => {
     const clock = mock.clock(on)
     let online = false
     let open = () => {}
@@ -362,8 +362,7 @@ describe('finding typeset-render', () => {
       download: () => (online ? 'good' : undefined),
       gate: () => (online ? opened : Promise.resolve()),
     })
-    on('ui.open', () => ({ value: { isPlaced: true as const } }))
-    // The pane reads `status` while drawing; a write to it is what draws the pane again.
+    // The band reads `status` while drawing; a write to it is what draws the band again.
     const reads: string[] = []
     let writes = 0
     on('state.get', (_, e, next) => {
@@ -386,44 +385,40 @@ describe('finding typeset-render', () => {
     // The command answers while the download still runs.
     const { text } = await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
     expect(text).toBeUndefined()
-    const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
-    const lines = async () => (await pane.findAll({ type: 'Text' })).map(found => found.text).join('\n')
-    expect(await lines()).toContain('renderer: NOT READY')
+    const band = await $.ui.mount(BAND)
+    await band.press({ key: 'details' })
+    const lines = async () => (await band.findAll({ type: 'Text' })).map(found => found.text).join('\n')
+    expect(await lines()).toContain('renderer not ready')
     expect(await lines()).toContain('could not download')
     expect(reads).toContain('status')
     const before = writes
     open()
     await clock.advance(0)
     expect(writes).toBeGreaterThan(before)
-    expect(await lines()).toContain('renderer: ready (typeset-render 4.0.0, ratex)')
+    expect(await lines()).toContain('typeset-render 4.0.0 · ratex')
+    expect(await lines()).not.toContain('renderer not ready')
     expect(world.downloads).toBe(2)
-    await pane.unmount()
+    await band.unmount()
   })
 
-  test('a status pane opened before the first check lands asks for the rows of the whole report', async ($, on) => {
+  test('a status band opened before the first check lands says the renderer is being checked', async ($, on) => {
     const clock = mock.clock(on)
     let open = () => {}
     const opened = new Promise<void>(resolve => {
       open = resolve
     })
     host(on, { checksums: sums(GOOD), download: () => 'good', gate: () => opened })
-    const rows: (number | undefined)[] = []
-    on('ui.open', (_, e) => {
-      rows.push(e.rows)
-
-      return { value: { isPlaced: true as const } }
-    })
     await $.session.start(START)
     await clock.advance(0)
     // The first download still runs: no health check has landed.
     await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    const pane = await $.ui.mount({ ...STATUS_PANE, surface: 'terminal' })
-    expect((await pane.findAll({ type: 'Text' })).map(found => found.text)).toContain('renderer: checking...')
-    await pane.unmount()
+    const band = await $.ui.mount(BAND)
+    expect(await band.find({ type: 'Text', text: /renderer checking…/ })).toBeDefined()
+    await band.press({ key: 'details' })
+    expect(await band.find({ type: 'Text', text: 'checking…' })).toBeDefined()
     open()
     await clock.advance(0)
-    await $.command.run({ ...RUN, command: 'typeset', args: 'status' })
-    expect(rows).toHaveLength(2)
-    expect(rows[0]).toBeGreaterThanOrEqual(rows[1] ?? Infinity)
+    expect(await band.find({ type: 'Text', text: /· ready 4\.0\.0 ·/ })).toBeDefined()
+    await band.unmount()
   })
 })
