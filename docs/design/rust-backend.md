@@ -74,9 +74,11 @@ formulas.
 
 ## Commands
 
-- `/typeset status` (and `/typeset` alone) opens a temporary pane
-  (`$.ui.open`, closed with Esc), laid out like `/btw`. It shows the last
-  health check at once and is drawn again when a fresh one lands.
+- `/typeset status` (and `/typeset` alone) opens a one-line summary in the
+  band above the prompt (`AbovePrompt`), in every layout, as the built-in
+  `/status` sits there; `d` expands the report, `x` or the next prompt closes
+  it (Escape never reaches a band). It shows the last health check at once
+  and is drawn again when a fresh one lands.
   `/typeset on|off|clear`, a mistyped argument and a failed hook answer with
   a toast. No subcommand output reaches the model, except `/typeset demo`,
   whose output is a sample reply to draw. Without a terminal (`claude -p`)

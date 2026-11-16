@@ -1,4 +1,4 @@
-import type { Elements, EngineInterface, Register, RenderElement, UiOpenResult } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement } from 'claude-code'
 
 import { layoutParagraph, mathRefs, parseMessage, stringWidth, toUnicode } from './layout'
 import type { Block, Line, MathRef, PictureState, Run } from './layout'
@@ -57,13 +57,11 @@ const DIAGRAM_FALLBACK = 'suggestion'
 
 // The state family a drawn reply reads, so a landed batch redraws it alone.
 const REDRAW = { plugin: 'typeset', key: 'redraw' } as const
-// The /typeset status pane's id.
-const STATUS_PANE = 'typeset-status'
-// What the status pane reads while drawing, so a landed health check redraws it.
+// What the status band reads while drawing: bumped when a health check lands
+// and when the band opens, closes or expands, so each redraws it.
 const STATUS = { plugin: 'typeset', key: 'status' } as const
-// Rows the health check's lines add to the status report once it lands, a
-// wrapped cell line included: renderer, TeX, cell, colour, CJK font, less "checking...".
-const HEALTH_ROWS = 5
+// The status report's label column, in cells.
+const LABEL_CELLS = 13
 
 // Memo bounds: trees by drawn site, parses by text. Above the replies of a
 // long session, as one redraw of the whole transcript must find them all
@@ -117,12 +115,14 @@ let bulletGlyph = BULLET_OTHER
 let maxProseWidth: number | undefined
 let lastColumns: number | undefined // the viewport width replies were last drawn at
 let warned = false
-// A person at a terminal: answers go to a pane or a toast, not to the
-// transcript (where a plugin command's text also reaches the model).
+// A person at a terminal: answers go to the band above the prompt or a toast,
+// not to the transcript (where a plugin command's text also reaches the model).
 let isTerminal = false
-let health: Health | undefined // the last health check's answer, for the status pane
-let healthCount = 0
+let health: Health | undefined // the last health check's answer, for the status band
+let statusCount = 0
 let statusCheck: Promise<unknown> | undefined
+let isStatusOpen = false
+let isStatusExpanded = false
 
 const isEnabled = () => enabled ?? settings.enabled
 
@@ -609,11 +609,19 @@ function definitionCount(macros: string): number {
   return (macros.match(/\\(?:(?:re)?newcommand|providecommand|[gex]?def|let|DeclareMathOperator)(?![A-Za-z])/g) ?? []).length
 }
 
-/** One line on the TeX fallback: off, missing, or on with the tools it found. */
-function texLine(health: Health): string {
-  if (!settings.texFallback) return 'TeX fallback: off (texFallback)'
+// A row's state, drawn as a dot before its value: ready, broken, or waiting.
+type Mark = 'ok' | 'bad' | 'wait'
+// One row of the report: a label, a value, a dim note after it.
+type StatusRow = { label: string; value: string; note?: string; mark?: Mark }
+type StatusSection = { title: string; rows: StatusRow[] }
+// The status report: one summary line, its sections, the recent errors.
+type StatusReport = { mark: Mark; summary: string; sections: StatusSection[]; errors: { latex: string; error: string }[] }
+
+/** The TeX fallback's row: off, missing, or on with the tools it found. */
+function texRow(health: Health): StatusRow {
+  if (!settings.texFallback) return { label: 'TeX', value: 'off', note: 'texFallback' }
   const tex = health.tex
-  if (tex === undefined) return 'TeX fallback: not reported'
+  if (tex === undefined) return { label: 'TeX', value: 'not reported' }
   const tools: [string, boolean][] = [
     ['latex', tex.latex],
     ['dvipng', tex.dvipng],
@@ -622,74 +630,110 @@ function texLine(health: Health): string {
     ['tikz-cd', tex.tikzCd],
   ]
   const missing = tools.filter(([, found]) => !found).map(([name]) => name)
-  if (!tex.latex || !tex.dvipng) return `TeX fallback: not available (missing ${missing.join(', ')}; install TeX Live for package commands and tikz)`
+  if (!tex.latex || !tex.dvipng) {
+    return { label: 'TeX', value: 'not available', note: `missing ${missing.join(' · ')}; install TeX Live for package commands and tikz` }
+  }
   const found = tools.filter(([, found]) => found).map(([name]) => name)
+  const note = `found ${found.join(' · ')}${missing.length > 0 ? `; missing ${missing.join(' · ')}` : ''}`
 
-  return `TeX fallback: ${tex.works === false ? 'on, but its test failed' : 'on'} (found ${found.join(', ')}${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''})`
+  return tex.works === false ? { label: 'TeX', value: 'on, but its test failed', note, mark: 'bad' } : { label: 'TeX', value: 'on', note, mark: 'ok' }
 }
 
-/** The status report, one line each, grouped as the pane shows it: state and renderer, TeX, cell and colour, fonts, setup, cache, diagrams, errors. */
-function statusLines(health: Health | undefined): string[] {
+// The TeX row's value as the summary line says it.
+const TEX_WORDS: Record<string, string> = { 'on, but its test failed': 'failed', 'not available': 'missing' }
+
+/** The status report: renderer, setup and cache, each a section of rows, and a summary line over them. */
+function statusReport(health: Health | undefined): StatusReport {
   const now = stats()
-  const source = enabled === undefined ? 'from settings' : `by /${COMMAND} ${enabled ? 'on' : 'off'}`
-  const lines = [`${isEnabled() ? 'on' : 'off'} (${source})`]
-  if (health === undefined) {
-    lines.push('renderer: checking...')
-  } else {
-    const cell = health.cell ? `${health.cell.width}x${health.cell.height} px` : 'unknown'
-    lines.push(
-      `renderer: ${health.ok ? 'ready' : 'NOT READY'}${health.version ? ` (${health.version}, ${health.engine ?? 'unknown engine'})` : ''}`,
-      ...health.problems.map(problem => `  problem: ${problem}`),
-      texLine(health),
-      `cell: ${cell} (setting: ${settings.cell}), baseline ${settings.baseline}, ${settings.ptPx} px/pt, min shrink ${settings.minShrink}, thicken ${settings.thicken}`,
-      `colour: ${health.fg ?? 'unknown'} (setting: ${settings.foreground})`,
-      `CJK font: ${health.cjkFont ?? 'none found'}${settings.cjkFont ? ` (setting: ${settings.cjkFont})` : ''}`,
-    )
-  }
-  lines.push(
-    `packages: ${settings.packages.length > 0 ? settings.packages.join(', ') : 'none extra'}; macros: ${definitionCount(settings.macros)} definitions`,
-    `cache: ${now.pictures} pictures, ${now.failed} failed, ${now.pending} pending, ${now.batches} render calls`,
-    `diagrams: ${settings.diagramColor ? `colour (${theme() ?? 'theme not known yet'})` : 'monochrome'}; prompt hint: ${settings.promptHint ? 'on' : 'off'}`,
-  )
-  if (now.errors.length > 0) {
-    lines.push('recent errors:')
-    for (const { latex, error } of now.errors.slice(-5)) {
-      lines.push(`  ${latex.slice(0, 60)}: ${error.slice(0, 160)}`)
+  const isOn = isEnabled()
+  const version = health?.version?.replace(/^typeset-render\s+/, '')
+  const renderer: StatusRow[] =
+    health === undefined
+      ? [{ label: 'engine', value: 'checking…', mark: 'wait' }]
+      : [
+          {
+            label: 'engine',
+            value: health.ok ? 'ready' : 'not ready',
+            note: health.version ? `${health.version} · ${health.engine ?? 'unknown engine'}` : undefined,
+            mark: health.ok ? 'ok' : 'bad',
+          },
+          ...health.problems.map((problem): StatusRow => ({ label: 'problem', value: problem, mark: 'bad' })),
+          texRow(health),
+          {
+            label: 'cell',
+            value: health.cell ? `${health.cell.width}×${health.cell.height} px` : 'unknown',
+            note: `setting ${settings.cell} · baseline ${settings.baseline} · ${settings.ptPx} px/pt · min shrink ${settings.minShrink} · thicken ${settings.thicken}`,
+          },
+          { label: 'colour', value: health.fg ?? 'unknown', note: `setting ${settings.foreground}` },
+          { label: 'CJK font', value: health.cjkFont ?? 'none found', note: settings.cjkFont ? `setting ${settings.cjkFont}` : undefined },
+        ]
+  const definitions = definitionCount(settings.macros)
+  const sections: StatusSection[] = [
+    { title: 'Renderer', rows: renderer },
+    {
+      title: 'Setup',
+      rows: [
+        { label: 'drawing', value: isOn ? 'on' : 'off', note: enabled === undefined ? 'from settings' : `by /${COMMAND} ${enabled ? 'on' : 'off'}` },
+        { label: 'packages', value: settings.packages.length > 0 ? settings.packages.join(', ') : 'none extra' },
+        { label: 'macros', value: `${definitions} definition${definitions === 1 ? '' : 's'}` },
+        settings.diagramColor ? { label: 'diagrams', value: 'colour', note: theme() ?? 'theme not known yet' } : { label: 'diagrams', value: 'monochrome' },
+        { label: 'prompt hint', value: settings.promptHint ? 'on' : 'off' },
+      ],
+    },
+    {
+      title: 'Cache',
+      rows: [{ label: 'pictures', value: String(now.pictures), note: `${now.failed} failed · ${now.pending} pending · ${now.batches} render calls` }],
+    },
+  ]
+  const texValue = health === undefined ? undefined : texRow(health).value
+  const tex = texValue === undefined ? undefined : (TEX_WORDS[texValue] ?? texValue)
+  const parts = [
+    isOn ? 'on' : 'off',
+    health === undefined ? 'renderer checking…' : health.ok ? `ready${version ? ` ${version}` : ''}` : 'renderer not ready',
+    ...(tex === undefined ? [] : [`TeX ${tex}`]),
+    `${now.pictures} pictures`,
+    now.failed > 0 ? `${now.failed} failed` : 'no errors',
+  ]
+  const isBroken = now.failed > 0 || sections.some(section => section.rows.some(row => row.mark === 'bad'))
+  const mark: Mark = health === undefined ? 'wait' : isBroken ? 'bad' : 'ok'
+
+  return { mark, summary: parts.join(' · '), sections, errors: now.errors.slice(-5) }
+}
+
+/** The report as plain text, for where no band is drawn (`claude -p`): notes aligned per section, no dots. */
+function statusText(report: StatusReport): string {
+  const lines = [`/${COMMAND} status: ${report.summary}`]
+  for (const section of report.sections) {
+    const cells = Math.max(0, ...section.rows.filter(row => row.note).map(row => stringWidth(row.value)))
+    lines.push('', section.title)
+    for (const row of section.rows) {
+      const value = row.note ? `${row.value}${' '.repeat(cells - stringWidth(row.value))}   ${row.note}` : row.value
+      lines.push(`  ${row.label.padEnd(LABEL_CELLS)}${value}`)
     }
   }
+  if (report.errors.length > 0) {
+    lines.push('', 'Recent errors')
+    for (const { latex, error } of report.errors) lines.push(`  ${latex.slice(0, 60)}: ${error.slice(0, 160)}`)
+  }
 
-  return lines
+  return lines.join('\n')
+}
+
+/** Redraws the status band: its open, expanded and health facts changed. */
+function redrawStatus($: EngineInterface): void {
+  statusCount += 1
+  void $.state.set(STATUS, statusCount).catch(() => {})
 }
 
 /**
- * Opens the status pane at once, with the last health check's answer, and
- * checks again; the pane is drawn anew when that check lands. False when no
- * pane can be shown here (the call failed, or no surface places it), and the
- * caller prints the report instead.
+ * Opens the status band above the prompt (collapsed to its summary line), with
+ * the last health check's answer, and checks again; the band is drawn anew when
+ * that check lands.
  */
-async function openStatus($: EngineInterface, columns: number): Promise<boolean> {
-  if (!isTerminal) return false
-  // Body rows the report wants: the title, a blank row, its lines as they
-  // wrap a little inside the terminal's width (the frame), a blank row, the hint.
-  // Before the first check lands (a first download) the renderer's lines are one
-  // "checking..." row: room is asked for the rest too, as the inline frame
-  // shrinks to what it draws but scrolls what it has no room for.
-  const room = Math.max(20, columns - 4)
-  const pending = health === undefined ? HEALTH_ROWS : 0
-  const rows = statusLines(health).reduce((sum, line) => sum + Math.max(1, Math.ceil(stringWidth(line) / room)), 0) + 4 + pending
-  let opened: UiOpenResult
-  try {
-    opened = await $.ui.open({ id: STATUS_PANE, title: `/${COMMAND} status`, focus: true, closeOnEscape: true, holdToasts: true, rows })
-  } catch {
-    return false
-  }
-  if (!opened.isPlaced) {
-    // An unplaced pane stays open and would show up later, unasked.
-    void $.ui.close({ id: STATUS_PANE }).catch(() => {})
-
-    return false
-  }
-  // One check at a time: a pane opened again meanwhile waits for the same one.
+function openStatus($: EngineInterface): void {
+  isStatusOpen = true
+  redrawStatus($)
+  // One check at a time: a band opened again meanwhile waits for the same one.
   if (statusCheck === undefined) {
     statusCheck = check($)
       .catch(() => undefined)
@@ -697,8 +741,13 @@ async function openStatus($: EngineInterface, columns: number): Promise<boolean>
         statusCheck = undefined
       })
   }
+}
 
-  return true
+function closeStatus($: EngineInterface): void {
+  if (!isStatusOpen) return
+  isStatusOpen = false
+  isStatusExpanded = false
+  redrawStatus($)
 }
 
 // ---------------------------------------------------------------------------
@@ -709,15 +758,16 @@ export const register: Register = (on, options) => {
   configure(settings, options)
   warned = false
   health = undefined
+  isStatusOpen = false
+  isStatusExpanded = false
 
   on('session.start', async ($, e, next) => {
     isTerminal = e.isInteractive && e.surface === 'terminal'
-    // Every health check, the polling's too, is kept for the status pane and
+    // Every health check, the polling's too, is kept for the status band and
     // draws it again: it opens on the latest answer.
     onHealth(found => {
       health = found
-      healthCount += 1
-      void $.state.set(STATUS, healthCount).catch(() => {})
+      redrawStatus($)
     })
     onProblem(reason => {
       if (warned) return
@@ -765,8 +815,8 @@ export const register: Register = (on, options) => {
   })
 
   // Nothing a subcommand answers reaches the model on a terminal: status opens
-  // a pane, on, off and clear a toast. Without a terminal (`claude -p`) they
-  // print, as the demo always does (its output is a reply to draw).
+  // the band above the prompt, on, off and clear a toast. Without a terminal
+  // (`claude -p`) they print, as the demo always does (its output is a reply to draw).
   on('command.run', { command: COMMAND }, async ($, e) => {
     const verb = e.args.trim().toLowerCase()
     const tell = (text: string) => {
@@ -792,9 +842,10 @@ export const register: Register = (on, options) => {
       return tell('forgot the drawn formulas; each is drawn again when it shows.')
     }
     if (verb === '' || verb === 'status') {
-      if (await openStatus($, e.presentation.columns)) return {}
+      if (!isTerminal) return { text: statusText(statusReport(await check($))) }
+      openStatus($)
 
-      return { text: statusLines(await check($)).join('\n') }
+      return {}
     }
 
     if (isTerminal) return tell(`unknown argument "${verb}": try status, on, off, demo or clear.`)
@@ -894,23 +945,108 @@ export const register: Register = (on, options) => {
     return await stream.result
   })
 
-  // The status pane, laid out as /btw's answer: the command in bold, the
-  // report, then a dim key hint.
-  on('ui.render', { component: 'Pane', requestId: STATUS_PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+  // The status band leaves when the person sends anything but /typeset itself.
+  on('prompt.submit', ($, e, next) => {
+    if (isStatusOpen && (e.origin.kind === 'composer' || e.origin.kind === 'bridge') && e.command?.name !== COMMAND) closeStatus($)
+
+    return next(e)
+  })
+
+  // The status band above the prompt: the summary line with its keys (d
+  // details, x close, once ctrl+x tab gives the band the keys), and when
+  // expanded the report: a bold title per section, dim labels in one column,
+  // dim notes aligned after the values, a dot for each row's state.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     await $.state.get(STATUS).catch(() => undefined)
+    if (!isStatusOpen || e.props.hasSurvey) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const report = statusReport(health)
+    const dot = (mark: Mark | undefined) =>
+      mark === undefined ? (
+        <Text>{'  '}</Text>
+      ) : (
+        <Text color={mark === 'ok' ? 'success' : mark === 'bad' ? 'error' : undefined} dimColor={mark === 'wait'}>
+          {mark === 'wait' ? '○ ' : '● '}
+        </Text>
+      )
+    const row = (key: string, label: RenderElement, mark: Mark | undefined, value: RenderElement) => (
+      <Box key={key}>
+        <Box width={LABEL_CELLS} flexShrink={0}>
+          {label}
+        </Box>
+        {dot(mark)}
+        <Box flexShrink={1}>{value}</Box>
+      </Box>
+    )
 
     return (
       <Box flexDirection="column">
-        <Text bold color="warning">
-          /{COMMAND} status
-        </Text>
-        <Box flexDirection="column" marginTop={1} marginBottom={1}>
-          {statusLines(health).map(line => (
-            <Text>{line}</Text>
-          ))}
+        <Box>
+          <Box flexShrink={0}>
+            <Text bold color="warning">
+              {COMMAND}{' '}
+            </Text>
+            {dot(report.mark)}
+          </Box>
+          <Box flexShrink={1}>
+            <Text wrap="truncate">{report.summary}</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text>{'   '}</Text>
+            <Button
+              key="details"
+              hotkey="d"
+              plain
+              label={isStatusExpanded ? 'less' : 'details'}
+              onPress={() => {
+                isStatusExpanded = !isStatusExpanded
+                redrawStatus($)
+              }}
+            />
+            <Text>{'  '}</Text>
+            <Button key="close" hotkey="x" plain role="dismiss" label="close" onPress={() => closeStatus($)} />
+          </Box>
         </Box>
-        <Text dimColor>Esc close</Text>
+        {isStatusExpanded ? (
+          <Box flexDirection="column" marginLeft={2}>
+            {report.sections.map(section => {
+              // Notes start in one column per section: values padded to the widest that has a note.
+              const cells = Math.max(0, ...section.rows.filter(found => found.note).map(found => stringWidth(found.value)))
+
+              return (
+                <Box key={section.title} flexDirection="column" marginTop={1}>
+                  <Text bold>{section.title}</Text>
+                  {section.rows.map((found, i) =>
+                    row(
+                      `${section.title}-${i}`,
+                      <Text dimColor>{found.label}</Text>,
+                      found.mark,
+                      <Text wrap="wrap">
+                        {found.note ? found.value + ' '.repeat(cells - stringWidth(found.value)) : found.value}
+                        {found.note ? <Text dimColor>{`   ${found.note}`}</Text> : null}
+                      </Text>,
+                    ),
+                  )}
+                </Box>
+              )
+            })}
+            {report.errors.length > 0 ? (
+              <Box flexDirection="column" marginTop={1}>
+                <Text bold>Recent errors</Text>
+                {report.errors.map(({ latex, error }, i) =>
+                  row(
+                    `error-${i}`,
+                    <Text color={CODE_COLOR} wrap="truncate">
+                      {latex.slice(0, 60)}
+                    </Text>,
+                    'bad',
+                    <Text wrap="wrap">{error.slice(0, 160)}</Text>,
+                  ),
+                )}
+              </Box>
+            ) : null}
+          </Box>
+        ) : null}
       </Box>
     )
   }).catch(($, e, next) => next(e))
