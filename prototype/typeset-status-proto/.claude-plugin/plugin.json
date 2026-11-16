@@ -1,0 +1,1 @@
+{ "name": "typeset-status-proto", "version": "0.1.0", "description": "PROTOTYPE: four ways to show /typeset status, run /tsproto a|b|c|d", "types": "./types/index.d.ts" }
