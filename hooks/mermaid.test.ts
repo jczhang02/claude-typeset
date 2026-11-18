@@ -642,4 +642,17 @@ describe('trees for the renderer', () => {
     expect(result.rows[5]?.at(-1)).toEqual({ text: 'A1', role: 'label' })
     expect(result.rows[5]?.[1]).toEqual({ text: '│   └──', role: 'edge' })
   })
+
+  test('the steps of a chain: the mark as border, the step text as label', () => {
+    const result = treeRows(['● 一 ── 起点', '│ └── A', '│', '● 二'])
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.rows[0]).toEqual([
+      { text: '●', role: 'border' },
+      { text: ' ', role: 'text' },
+      { text: '一 ── 起点', role: 'label' },
+    ])
+    expect(result.rows[1]?.at(-1)).toEqual({ text: 'A', role: 'label' })
+    expect(result.rows[2]).toEqual([{ text: '│', role: 'edge' }])
+    expect(result.rows[3]?.at(-1)).toEqual({ text: '二', role: 'label' })
+  })
 })

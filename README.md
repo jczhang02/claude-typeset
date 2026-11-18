@@ -169,6 +169,20 @@ A `mindmap`, and a flowchart shaped as a tree, are drawn by the renderer instead
 ```
 
 - A flowchart counts as a tree when it has one root, at most one parent per node, no edge labels, no subgraphs, no cycles, and some node with two children or more (a plain chain of steps stays a row of boxes). It is drawn in that order: the root first, each node's children in the order their edges are written, labels as written, shapes dropped.
+- A tree flowchart whose root starts a chain written in one statement (`A --> B --> C --> D`, four nodes or more, the only chain in the source) is a sequence, not a hierarchy: its steps are drawn one under another, each marked `●` and joined by a line on the left, with the step's other children as an outline under it. The chain is not drawn as a staircase of ever deeper levels.
+
+```text
+● 1 背景
+│ └── 应用
+│
+● 2 方法
+│ ├── 网络
+│ └── 损失
+│
+● 3 实验
+│
+● 4 结论
+```
 - Node shapes, icons (`::icon(...)`) and classes (`:::name`) of a mindmap are not drawn. A mindmap with two roots is refused, as mermaid refuses it.
 - Labels too long for the reply are cut with `…`. A mindmap that still does not fit, or is more than 80 rows, shows as source with the reason; a tree flowchart that does not is drawn as boxes instead.
 - While the renderer draws it (a few milliseconds, usually done while the reply streams), a mindmap shows as source and a flowchart as boxes. Without the renderer a tree flowchart is drawn as boxes and a mindmap shows as source.

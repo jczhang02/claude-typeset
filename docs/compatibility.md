@@ -248,6 +248,12 @@ mermaid-text crate (0.58.0), an outline under a boxed root
   edge label, no edge both ways, no subgraph, no cycle, and some node with
   two children or more. The answer for any other flowchart starts with
   "not a tree", and the hooks draw it as boxes.
+- A tree flowchart whose root starts a chain written in one statement
+  (`A --> B --> C --> D`, four nodes or more, and the only statement that
+  is a chain) is drawn as steps: one `● ` line per node of the chain, a `│`
+  line between them, and each step's other children as an outline under
+  it. Edges written one per statement, fan-outs with `&`, and two or more
+  chains (a hierarchy written as paths) draw the outline as before.
 - The drawing keeps to the reply's width (at most 255 columns) by cutting
   long labels with `…`, and to 80 rows; otherwise it is refused with its
   size.
