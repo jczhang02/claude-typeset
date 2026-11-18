@@ -66,6 +66,8 @@ formulas.
   labels, no edge both ways, no subgraphs, no cycles, and some node with two
   children or more) is converted to a mindmap and drawn the same way (always
   vertical). A plain chain stays boxes and arrows, which read better there.
+  A chain from the root written in one statement, with branches off it, is
+  drawn as steps (`●`) with their branches, not as nested levels.
   While the renderer draws it, or when it does not fit, a tree flowchart is
   drawn by beautiful-mermaid and a mindmap shows as source.
 - Every other diagram stays with the vendored beautiful-mermaid in TypeScript.

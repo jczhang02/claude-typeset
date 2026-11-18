@@ -966,7 +966,8 @@ function looksLikeTree(prepared: string[]): boolean {
  * A tree the renderer drew, as rows of coloured segments: the root's box
  * as 'border', the lines that join the nodes as 'edge', node text as
  * 'label'. The text after a branch ("├── ", "└── ") is all label, so a
- * label holding a line character keeps the label colour.
+ * label holding a line character keeps the label colour. The steps of a
+ * chain ("● 2 Next step") have their mark as 'border' and their text as label.
  */
 export function treeRows(lines: string[]): DiagramResult {
   const safe = lines.map(line => line.replace(UNSAFE, '').replace(/\s+$/, ''))
@@ -983,6 +984,13 @@ export function treeRows(lines: string[]): DiagramResult {
       }
 
       return lead(line, 'border')
+    }
+    if (!isBoxed && line.startsWith('● ')) {
+      return [
+        { text: '●', role: 'border' as const },
+        { text: ' ', role: 'text' as const },
+        { text: line.slice(2), role: 'label' as const },
+      ].filter(segment => segment.text !== '')
     }
     const at = line.indexOf('── ')
     if (at < 0) {

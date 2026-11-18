@@ -11,6 +11,11 @@
 //! subgraphs, no cycles, and some node with two children or more (a plain
 //! chain of steps reads better as boxes and arrows than as a staircase).
 //! Anything else is answered "not a tree", and the hooks draw it themselves.
+//!
+//! A tree whose root starts a chain written in one statement ("A --> B -->
+//! C") is a sequence of steps with details hanging off them, not a
+//! hierarchy seven levels deep: its steps are drawn one under another on a
+//! line of their own ("● "), each with its other children as an outline.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::LazyLock;
@@ -57,8 +62,22 @@ pub fn draw(source: &str, max_columns: usize) -> Result<Drawing, String> {
     let body = lines.join("\n");
     // The crate is young: a panic in it fails this diagram alone.
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let tree = if is_mindmap { mindmap(&body)? } else { tree(&body)? };
-        fit(&tree, max_columns, if is_mindmap { "mindmap" } else { "tree" })
+        if is_mindmap {
+            let map = mindmap(&body)?;
+            return fit(
+                |width| mermaid_text::render::mindmap::render(&map, width),
+                max_columns,
+                "mindmap",
+            );
+        }
+        match tree(&body)? {
+            Tree::Outline(map) => fit(
+                |width| mermaid_text::render::mindmap::render(&map, width),
+                max_columns,
+                "tree",
+            ),
+            Tree::Steps(steps) => fit(|width| draw_steps(&steps, width), max_columns, "tree"),
+        }
     }));
     outcome.unwrap_or_else(|_| Err("diagram drawing failed on this diagram".into()))
 }
@@ -163,10 +182,17 @@ fn mindmap(body: &str) -> Result<Mindmap, String> {
     Ok(map)
 }
 
+/// A flowchart that is a tree: an outline, or the steps of the chain its
+/// root starts, each step with its other children.
+enum Tree {
+    Outline(Mindmap),
+    Steps(Vec<MindmapNode>),
+}
+
 /// A flowchart as a mindmap, when it is a tree: the root first, each node's
 /// children in the order their edges were written, labels as written,
-/// shapes dropped.
-fn tree(body: &str) -> Result<Mindmap, String> {
+/// shapes dropped. When the root starts a chain, its steps instead.
+fn tree(body: &str) -> Result<Tree, String> {
     let body: Vec<String> = body.lines().map(canonical_arrows).collect();
     let graph = mermaid_text::parser::flowchart::parse(&body.join("\n")).map_err(|error| {
         format!(
@@ -191,9 +217,139 @@ fn tree(body: &str) -> Result<Mindmap, String> {
                 .collect(),
         }
     }
-    Ok(Mindmap {
+    if let Some(chain) = chain_from_root(&body, &graph, root) {
+        let mut steps = Vec::with_capacity(chain.len());
+        for (i, &at) in chain.iter().enumerate() {
+            let next = chain.get(i + 1);
+            steps.push(MindmapNode {
+                text: tidy(&graph.nodes[at].label),
+                children: children[at]
+                    .iter()
+                    .filter(|&child| Some(child) != next)
+                    .map(|&child| build(child, &graph, &children))
+                    .collect(),
+            });
+        }
+        return Ok(Tree::Steps(steps));
+    }
+    Ok(Tree::Outline(Mindmap {
         root: build(root, &graph, &children),
-    })
+    }))
+}
+
+/// Nodes a chain of steps has at least: a shorter path from the root
+/// ("Root --> Group --> Item") is as often a hierarchy written in one line.
+const MIN_STEPS: usize = 4;
+
+/// The nodes of the chain the root starts, in order, when the flowchart has
+/// one: the only statement that is a chain of two arrows or more, MIN_STEPS
+/// nodes or more from the root ("R --> A --> B --> C"). Edges written one
+/// per statement, or fanned out with '&', say nothing about order; several
+/// paths written as chains are a hierarchy.
+fn chain_from_root(body: &[String], graph: &Graph, root: usize) -> Option<Vec<usize>> {
+    let index = |id: &str| graph.nodes.iter().position(|node| node.id == id);
+    let mut found = None;
+    for statement in statements(body) {
+        let Ok(one) = mermaid_text::parser::flowchart::parse(&format!("graph TD\n{statement}")) else {
+            continue;
+        };
+        let edges = &one.edges;
+        // A fan-out ("A --> B & C") is no chain, and no order.
+        if edges.len() < 2 || !edges.windows(2).all(|pair| pair[0].to == pair[1].from) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        if index(&edges[0].from)? != root {
+            return None;
+        }
+        let chain: Vec<usize> = std::iter::once(&edges[0].from)
+            .chain(edges.iter().map(|edge| &edge.to))
+            .map(|id| index(id))
+            .collect::<Option<_>>()?;
+        found = Some(chain);
+    }
+    found.filter(|chain| chain.len() >= MIN_STEPS)
+}
+
+/// The statements of a flowchart, its header gone: each line split at the
+/// ';' outside quotes, shapes and |labels|.
+fn statements(body: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (at, line) in body.iter().enumerate() {
+        let mut pieces = Vec::new();
+        let (mut quote, mut pipe, mut depth) = (false, false, 0usize);
+        let mut current = String::new();
+        for c in line.chars() {
+            match c {
+                '"' => quote = !quote,
+                '(' | '[' | '{' if !quote && !pipe => depth += 1,
+                ')' | ']' | '}' if !quote && !pipe => depth = depth.saturating_sub(1),
+                '|' if !quote && depth == 0 => pipe = !pipe,
+                ';' if !quote && !pipe && depth == 0 => {
+                    pieces.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+            current.push(c);
+        }
+        pieces.push(current);
+        // The header ("graph TD") is the first piece of the first line.
+        let skip = usize::from(at == 0);
+        out.extend(pieces.into_iter().skip(skip).filter(|piece| !piece.trim().is_empty()));
+    }
+    out
+}
+
+/// Steps drawn one under another, joined by the line on the left, each
+/// with its other children as an outline under its text. With a width,
+/// every label is cut with '…' to fit it.
+fn draw_steps(steps: &[MindmapNode], width: Option<usize>) -> String {
+    fn cut(text: &str, room: Option<usize>) -> String {
+        let Some(room) = room else {
+            return text.to_string();
+        };
+        if UnicodeWidthStr::width(text) <= room {
+            return text.to_string();
+        }
+        let mut out = String::new();
+        let mut used = 0;
+        for c in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            if used + w + 1 > room {
+                break;
+            }
+            out.push(c);
+            used += w;
+        }
+        let mut out = out.trim_end().to_string();
+        out.push('…');
+        out
+    }
+    fn branch(out: &mut Vec<String>, node: &MindmapNode, prefix: &str, last: bool, width: Option<usize>) {
+        let lead = format!("{prefix}{}", if last { "└── " } else { "├── " });
+        let room = width.map(|w| w.saturating_sub(UnicodeWidthStr::width(lead.as_str())));
+        out.push(format!("{lead}{}", cut(&node.text, room)));
+        let below = format!("{prefix}{}", if last { "    " } else { "│   " });
+        for (i, child) in node.children.iter().enumerate() {
+            branch(out, child, &below, i + 1 == node.children.len(), width);
+        }
+    }
+    let mut out = Vec::new();
+    for (i, step) in steps.iter().enumerate() {
+        let last = i + 1 == steps.len();
+        out.push(format!("● {}", cut(&step.text, width.map(|w| w.saturating_sub(2)))));
+        let spine = if last { "  " } else { "│ " };
+        for (j, child) in step.children.iter().enumerate() {
+            branch(&mut out, child, spine, j + 1 == step.children.len(), width);
+        }
+        if !last {
+            out.push("│".into());
+        }
+    }
+    out.join("\n")
 }
 
 /// An arrow operator, long forms included, at the start of the text.
@@ -303,11 +459,11 @@ fn tree_root(graph: &Graph) -> Result<usize, String> {
     Ok(root)
 }
 
-/// The tree drawn whole when it fits, else through the crate's width
-/// fitting (long labels cut with '…'); refused when even that does not fit
-/// or would leave a label nothing but the '…', or when it is too tall.
-fn fit(tree: &Mindmap, max_columns: usize, noun: &str) -> Result<Drawing, String> {
-    let whole = lines(&mermaid_text::render::mindmap::render(tree, None));
+/// The tree drawn whole when it fits, else drawn again at the width (long
+/// labels cut with '…'); refused when even that does not fit or would leave
+/// a label nothing but the '…', or when it is too tall.
+fn fit(render: impl Fn(Option<usize>) -> String, max_columns: usize, noun: &str) -> Result<Drawing, String> {
+    let whole = lines(&render(None));
     // The hooks refuse a line of more UTF-16 units than this, whatever its
     // width (combining marks, joined emoji): it is refused here, by name.
     let too_long = |drawn: &[String]| drawn.iter().any(|line| line.encode_utf16().count() > MAX_LINE_UNITS);
@@ -326,11 +482,11 @@ fn fit(tree: &Mindmap, max_columns: usize, noun: &str) -> Result<Drawing, String
             columns: wide,
         });
     }
-    let cut = lines(&mermaid_text::render::mindmap::render(tree, Some(max_columns)));
+    let cut = lines(&render(Some(max_columns)));
     let columns = widest(&cut);
     let emptied = cut
         .iter()
-        .any(|line| line.ends_with("── …") || line.trim_end() == "│ … │");
+        .any(|line| line.ends_with("── …") || line.trim_end() == "│ … │" || line == "● …" || line == "●");
     if columns > max_columns || emptied {
         return Err(format!("{noun} is {wide} columns wide, {max_columns} available"));
     }
@@ -418,6 +574,70 @@ mod tests {
         let flow = drawn("graph TD\n  R[Root] --> A[\"f(x) 的定义\"]\n  R --> B\n  A-->A1((leaf)) & A2\n");
         let mind = drawn("mindmap\n  Root\n    a[\"f(x) 的定义\"]\n      leaf\n      A2\n    B");
         assert_eq!(flow, mind);
+    }
+
+    #[test]
+    fn a_chain_written_from_the_root_draws_as_steps_with_their_branches() {
+        // The chain is the sequence the author wrote; B's deep branch is
+        // longer than the chain and still hangs off B.
+        let lines = drawn(
+            "flowchart TD\n  A[Start] --> B --> C --> D\n  A --> A1\n  B --> B1 & B2\n  B1 --> B11\n  B11 --> B111",
+        );
+        assert_eq!(
+            lines,
+            [
+                "● Start",
+                "│ └── A1",
+                "│",
+                "● B",
+                "│ ├── B1",
+                "│ │   └── B11",
+                "│ │       └── B111",
+                "│ └── B2",
+                "│",
+                "● C",
+                "│",
+                "● D",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_chain_from_the_root_makes_steps() {
+        // A chain further down, a short one, two of them (a hierarchy
+        // written as paths), edges written one by one, or statements that
+        // share a line draw as the outline they always did.
+        for source in [
+            "graph TD\n  R --> A\n  A --> B --> C --> D\n  R --> E",
+            "graph TD\n  R --> A --> B\n  A --> C",
+            "graph TD\n  R --> A\n  A --> B\n  A --> C",
+            "graph TD\n  R --> A & B\n  A --> C",
+            "flowchart TD\n  Root --> Cat1 --> Sub1 --> Item1\n  Cat1 --> Item2\n  Root --> Cat2 --> Sub2 --> Item3",
+            "graph TD; R --> A; A --> B; B --> C\n  A --> D",
+            "graph TD\n  R --> A; A --> B; B --> C\n  A --> D",
+        ] {
+            assert!(drawn(source)[0].starts_with('╭'), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_chain_after_the_header_on_its_line_is_steps() {
+        let lines = drawn("graph TD; R --> A --> B --> C; A --> D");
+        assert_eq!(lines, ["● R", "│", "● A", "│ └── D", "│", "● B", "│", "● C"]);
+    }
+
+    #[test]
+    fn steps_are_cut_to_fit_and_refused_when_nothing_is_left() {
+        let source =
+            "graph TD\n  A[a long first step] --> B[a long second step] --> C --> E\n  A --> D[a long branch label]";
+        let cut = draw(source, 16).expect("cut to fit");
+        assert!(cut.columns <= 16, "{:?}", cut.lines);
+        assert_eq!(cut.lines[0], "● a long first…");
+        assert!(cut.lines[1].ends_with('…'), "{:?}", cut.lines);
+        assert_eq!(
+            draw(source, 6).expect_err("too narrow"),
+            "tree is 25 columns wide, 6 available"
+        );
     }
 
     #[test]
